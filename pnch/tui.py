@@ -879,11 +879,12 @@ class DayScreen(Screen):
                     rng.append("\n● unsaved", style=f"bold {ui.T.warn}")
                 what = ui.notes_text(s.notes) if s.notes else Text("— no description yet, enter to add one", style=ui.T.dim)
                 t.add_row(rng, Text(fmt_hm(s.minutes()), style=ui.T.accent2), what, key=str(s.id), height=None)
-            if blocks:
-                t.move_cursor(row=min(keep, len(blocks) - 1))
-        t.display = bool(blocks)
-        self.query_one("#dayempty", Static).update(
-            Text("nothing logged this day · ctrl+n to add a block", style=ui.T.dim) if not blocks else "")
+            # last row: always there, enter on it adds a block for this day
+            t.add_row(Text("+", style=f"bold {ui.T.accent}"), "",
+                      Text("add a block" + ("" if blocks else " (nothing logged this day yet)"), style=ui.T.muted),
+                      key="add")
+            t.move_cursor(row=min(keep, len(blocks)))
+        self.query_one("#dayempty", Static).update("")
         self._timeline(blocks)
 
     def _timeline(self, blocks) -> None:
@@ -895,16 +896,22 @@ class DayScreen(Screen):
     def on_resize(self) -> None:
         self.call_after_refresh(self.reload)
 
-    def _selected(self) -> Session | None:
+    def _cursor_key(self) -> str | None:
         t = self.query_one(DataTable)
         if not t.row_count:
             return None
-        key = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
-        return Store.load().get(int(key))
+        return t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
+
+    def _selected(self) -> Session | None:
+        key = self._cursor_key()
+        return Store.load().get(int(key)) if key and key != "add" else None
 
     @on(DataTable.RowSelected)
     def _row_enter(self) -> None:
-        self.action_edit()
+        if self._cursor_key() == "add":
+            self.action_new()
+        else:
+            self.action_edit()
 
     def action_edit(self) -> None:
         s = self._selected()
