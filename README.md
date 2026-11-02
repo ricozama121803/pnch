@@ -1,116 +1,169 @@
-# ⏱ pnch
+# ¡PNCH!
 
-Clock in/out from the terminal, jot down what you did, and at the end of the week
-approve it and export a log + invoice PDF.
+A terminal time clock. Punch in and out, jot down what you worked on, and at the end of the
+week approve it and export a log + invoice PDF.
 
-Meet **Bucky**, the boxing beaver next to the ¡PNCH! banner. He naps while you're off the clock;
-punch in and the fight bell wakes him up to punch down trees until you punch out
-(turn him off with `mascot = false` under `[ui]`).
+![pnch on the clock](docs/screenshots/main.svg)
+
+Meet **Bucky**, the boxing beaver next to the banner. He naps while you're off the clock; punch
+in and the fight bell wakes him up to punch down trees until you punch out.
+
+![off the clock, Bucky asleep](docs/screenshots/off-the-clock.svg)
 
 ## Install
 
+Needs Python 3.11+.
+
 ```sh
-pipx install -e ~/projects/PunchDesk    # gives you the `pnch` command
-pnch config --edit                      # set your name, address, client, rate, theme
+git clone https://github.com/ricozama121803/pnch.git
+pipx install -e ./pnch          # gives you the `pnch` command
+pnch config --edit              # your name, address, client, rate
 ```
 
-## The app
+Optional: `man pnch` after linking the man page:
 
-Run `pnch` on its own for the full-screen app. Type commands in the **prompt bar** at the bottom:
+```sh
+mkdir -p ~/.local/share/man/man1 && ln -s "$PWD/pnch/man/pnch.1" ~/.local/share/man/man1/
+```
+
+## Using the app
+
+Run `pnch` on its own. Commands go in the **prompt bar** at the bottom; what you're working on
+goes in the **working on** box.
 
 | type | does |
 | --- | --- |
-| `in` / `in fixing the scraper` | punch in (timer, punch-in time and your item list appear) |
-| `out` | punch out: shows what you did, asks "Did you do anything else not listed?", confirm times, save |
+| `in` / `in fixing the scraper` | punch in: a timer, your punch-in time and your item list appear |
+| `out` | punch out: shows what you did, asks "Did you do anything else not listed?", confirm the times |
 | `undo` / `redo` | take back your last change, or put it back (also `ctrl+z` / `ctrl+y`) |
-| `/vday [day]` | view a day, with its total next to the date (`/vday yesterday`) |
-| `/vweek [week]` | view the week's times (`/vweek last`) |
-| `/previewLogs [week]` | preview the week's log + invoice PDF |
-| `/exportLogs [week]` | save the PDF into your export folder (approves the week first if needed) |
-| `/weeks` | calendar of all your weeks: ↑↓ to pick one, `p` preview · `e` export · `a` approve · `enter` open |
-| `/config` | hourly rate, color theme (live preview), export folder, file-name style |
+| `/vday [day]` | view a day: blocks, total and a timeline (`/vday yesterday`) |
+| `/vweek [week]` | view a week's times with a timeline per day (`/vweek last`) |
+| `/weeks` | calendar of all your weeks: preview, export or approve any of them |
+| `/previewLogs [week]` | preview the log + invoice PDF |
+| `/exportLogs [week]` | save the PDF to your export folder (approves the week first if needed) |
+| `/config` | hourly rate, color theme, export folder, file-name style |
 | `/help` | everything |
 
-What you're working on goes in the separate **working on** box. `tab` switches between the
-prompt bar → working on → today → week; `enter` on today or week opens it. In the working-on
-box, `↑` jumps into the item list (`f2` rename, `delete` remove, `esc` back).
+Typing `/` opens a menu: `↑` `↓` to pick, `tab` to complete, `enter` to run.
 
-Everything is saved the moment you press enter. The status line under the prompt shows
-**● on the clock** while a block is running, **● unsaved** only when you've typed an item but not
-pressed enter yet, and **✓ saved** otherwise. Running blocks are tagged **● running**. If
-pnch closes unexpectedly while you're clocked in, the next launch tells you when it last saw you
-and lets you keep the clock running or end the block at that time. Half-typed items come back too.
+![the slash menu](docs/screenshots/slash-menu.svg)
 
-Shortcuts: `ctrl+s` punch in/out · `ctrl+n` working-on box · `ctrl+p` command palette (approve,
-export, past blocks…) · `ctrl+q` quit · `f1` all the rest.
+### Punching out
 
-The day and week views end with a timeline bar showing when each block happened.
-In the day view (`tab` to **today**, `enter`) pick a block and press `enter` to edit its descriptions.
-Every `enter` saves right away: adding, renaming (`f2`) or removing (`delete`) a line, and changing a
-finished block's times. `esc` just closes.
+`out` (or `ctrl+s`) shows the block, what you listed, and asks if you did anything else.
+Each line you add is saved as soon as you press `enter`; an empty `enter` punches out.
+`esc` keeps you on the clock. Punch in and out as many times a day as you like.
 
-If a block's times overlap another block, pnch shows both and lets you **merge** them, **fit** the new
-one into the free gap, **shorten** the other one, or **replace** it (or go back and change the times).
+![punching out](docs/screenshots/punch-out.svg)
 
-Quitting always asks first. Off the clock: "Are you sure? Everything will be saved." On the clock:
-punch out (review and save the block, then quit) or stay clocked in (the clock keeps running while
-pnch is closed). Anything typed in the working-on box is saved either way.
+### Days and weeks
 
-The layout adapts to the window: in narrow windows the side panels tuck away (today and week totals
-move under the timer, `ctrl+b` brings them back) and the big timer switches to a compact one.
+`tab` cycles prompt bar → working on → **today** → **week**; `enter` on a panel opens it.
+In a day, `enter` on a block edits it (times and descriptions, every `enter` saves), and the
+last row, **+ add a block**, adds one. `[` `]` flip between days or weeks.
 
-Every command below also works straight from your shell as `pnch <command>`.
+![a day](docs/screenshots/day.svg)
+![a week](docs/screenshots/week.svg)
 
-## Day to day
+### Picking a week
+
+`/weeks` shows every week as a calendar row with its hours and status. `↑` `↓` to pick,
+`p` preview, `e` export, `a` approve, `enter` to open it.
+
+![the week picker](docs/screenshots/weeks.svg)
+
+### Overlapping blocks
+
+If a block's times overlap another one, pnch shows both and offers the fixes that make sense:
+merge them, fit the new one into the free gap, shorten the other one, or replace it.
+
+![fixing an overlap](docs/screenshots/overlap.svg)
+
+### Settings
+
+`/config` sets your hourly rate, theme (live preview: catppuccin, nord, gruvbox, tokyonight,
+rosepine), export folder and file-name style. Everything else (name, address, client, billing
+rule) lives in the config file: `ctrl+o` there, or `pnch config --edit`.
+
+![config](docs/screenshots/config.svg)
+
+### Keys
+
+| key | does |
+| --- | --- |
+| `tab` | switch between prompt bar, working on, today, week |
+| `ctrl+s` | punch in / punch out |
+| `ctrl+n` | jump to the working-on box |
+| `ctrl+z` / `ctrl+y` | undo / redo |
+| `ctrl+p` | command palette: approve, export, past blocks, … |
+| `ctrl+q` | quit: always asks; on the clock you can punch out or keep the clock running |
+| `f1` | every shortcut |
+
+### Saving and crashes
+
+Everything is written to disk the moment you press `enter`. The status line says
+**● on the clock** while a block is running, **● unsaved** only when you've typed an item but
+not pressed `enter` yet, and **✓ saved** otherwise. If pnch closes unexpectedly while you're
+clocked in, the next launch tells you when it last saw you and lets you keep the clock running
+or end the block then. Half-typed items come back too, and a damaged data file is restored from
+its backup.
+
+## The PDF
+
+Approving a week locks it and fixes the billed hours (by default worked time rounded down to
+whole hours: 9h 20m → 9h; you can change it while approving). The export is two pages:
+
+| log | invoice |
+| --- | --- |
+| ![log page](docs/screenshots/pdf-log.png) | ![invoice page](docs/screenshots/pdf-invoice.png) |
+
+Until a week is approved, previews are watermarked **PREVIEW**.
+
+## From the shell
+
+Every action also works as `pnch <command>`, which is handy for scripts and status bars.
 
 ```sh
-pnch in fixing the scraper     # clock in (note is optional)
+pnch in fixing the scraper          # clock in (the item is optional)
 pnch note "checked VPN prefix list"
-pnch out                       # asks what you did if there are no notes yet
-pnch status                    # dashboard
-pnch status -W                 # live dashboard with a ticking clock
-```
-
-Forgot to clock in or out?
-
-```sh
-pnch in --at 9:30am
-pnch out --at 5:15pm
-pnch add 10/14 11pm 12:12am getting manual leads together
-pnch log                       # shows session #s
-pnch edit 3                    # interactive edit (or --start/--end/--note)
+pnch out --at 5:15pm                # forgot to clock out
+pnch add 10/14 11pm 12:12am pulled the leads list together
+pnch log                            # this week's blocks with their #s
+pnch edit 3                         # or --start / --end / --note
 pnch rm 3
-pnch undo                      # take back the last change (pnch redo puts it back)
+pnch undo                           # pnch redo puts it back
+
+pnch preview -w last                # PDF inline (kitty/Ghostty/WezTerm) or in your viewer
+pnch approve -w last                # confirm billed hours + invoice line, lock the week
+pnch export -w last                 # write the PDF to your export folder
+pnch unapprove -w last              # unlock a week to edit it
+
+pnch weeks                          # hours, invoice # and status per week
+pnch status -W                      # live dashboard
+pnch bar --json                     # one-liner for waybar / polybar / tmux
 ```
 
-## End of the week
+Weeks: `-w this | last | -2 | 10/14`. Days: `today`, `yesterday`, `tue`, `10/14`, `2026-10-14`.
+Times: `9`, `9am`, `9:30pm`, `930pm`, `21:30`. Weeks run Monday–Sunday, and a block that runs
+past midnight counts on the day it started. See `man pnch` for everything.
 
-```sh
-pnch preview                   # PDF preview inline (kitty/ghostty/wezterm) or in your viewer
-pnch approve                   # review, confirm billed hours + invoice line, lock the week
-pnch export                    # writes ~/Documents/pnch/logsweekM_D-M_D.pdf
-```
+## Files
 
-`export` only works on approved weeks. Approved weeks are locked; `pnch unapprove` unlocks one.
-Every week command takes `-w this | last | -2 | 10/14`.
+| | |
+| --- | --- |
+| `~/.config/pnch/config.toml` | your details, rate, theme, export settings |
+| `~/.local/share/pnch/data.json` | the log (plus a `.bak` and undo history) |
+| `~/Documents/pnch/` | exported PDFs (change it in `/config`) |
 
-## Extras
+`pnch config --path` prints them. Set `PNCH_HOME=/some/folder` to keep everything in one place.
 
-- `pnch weeks`: history with hours, amount, invoice # and status
-- `pnch bar` / `pnch bar --json`: one-liner for waybar, polybar, tmux or your prompt
-- Themes in config: `catppuccin`, `nord`, `gruvbox`, `tokyonight`, `rosepine`
-- Files: `pnch config --path`. Set `PNCH_HOME=/some/dir` to sandbox everything.
-
-Weeks run Monday–Sunday. A session that crosses midnight counts on the day it started.
-Billed hours come from `invoice.billing` (`down` by default: 9h 20m → 9h), and you can override them at approval.
-
-## Running the tests
+## Development
 
 ```sh
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q             # 121 tests, each in its own temp folder
+.venv/bin/python scripts/screenshots.py   # regenerate the screenshots above
 ```
 
-They cover typing odd times and dates, overlapping blocks, locked weeks, undo/redo, damaged data
-files, export file names, big multi-page PDFs, and the app itself driven with real key presses.
-Every test runs in its own temporary folder, so your real log is never touched.
+The tests cover odd times and dates, overlapping blocks, locked weeks, undo/redo, damaged data
+files, export file names, multi-page PDFs, and the app itself driven with real key presses.
