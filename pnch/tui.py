@@ -1710,10 +1710,10 @@ class PnchApp(App):
     #week.unsaved { border-subtitle-color: $warning; border-subtitle-style: bold; }
 
     #slash {
-        display: none; height: auto; max-height: 8; margin: 0 1; border: round $foreground 25%;
-        background: $surface; padding: 0 1;
+        display: none; height: auto; max-height: 14; margin: 0 1; border: round $foreground 25%;
+        background: $surface; padding: 0 1; scrollbar-size-vertical: 0;
     }
-    #slash > .option-list--option-highlighted { background: $boost; }
+    #slash > .option-list--option-highlighted { background: $primary 35%; text-style: none; }
     #prompt { height: 3; margin: 0 1; border: round $foreground 30%; padding: 0 1; }
     #prompt:focus-within { border: round $accent; }
     #caret { width: 2; color: $accent; text-style: bold; }
