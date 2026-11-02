@@ -511,7 +511,7 @@ class LogScreen(Screen):
         box = self.query_one("#logbox")
         box.border_title = f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}   [ ] to switch weeks"
         live = any(s.running for s in store.in_week(self.monday))
-        box.border_subtitle = "● unsaved block in progress" if live else ("approved 🔒" if r.approved else "pending approval")
+        box.border_subtitle = "● block in progress" if live else ("approved 🔒" if r.approved else "pending approval")
         box.set_class(live, "unsaved")
         t = self.query_one(DataTable)
         t.clear()
@@ -522,7 +522,7 @@ class LogScreen(Screen):
             rng = Text(fmt_range(s.start, s.end))
             if s.running:
                 rng.stylize(f"bold {ui.T.ok}")
-                rng.append("  ● unsaved", style=f"bold {ui.T.warn}")
+                rng.append("  ● running", style=f"bold {ui.T.ok}")
             t.add_row(day, str(s.id), rng, fmt_hm(s.minutes()),
                       Text(" · ".join(s.notes) or "—", overflow="ellipsis", no_wrap=True), key=str(s.id))
         self.query_one("#logtotal", Static).update(ui.totals_line(r))
@@ -864,7 +864,7 @@ class DayScreen(Screen):
         if store.is_approved(week_start(self.day)):
             box_.border_subtitle = "approved 🔒 (read only)"
         else:
-            box_.border_subtitle = "● unsaved block in progress" if live else "enter to edit a block"
+            box_.border_subtitle = "● block in progress" if live else "enter to edit a block"
         box_.set_class(live, "unsaved")
 
         t = self.query_one(DataTable)
@@ -876,7 +876,7 @@ class DayScreen(Screen):
             for s in blocks:
                 rng = Text(fmt_range(s.start, s.end), style=f"bold {ui.T.ok}" if s.running else ui.T.text)
                 if s.running:
-                    rng.append("\n● unsaved", style=f"bold {ui.T.warn}")
+                    rng.append("\n● running", style=f"bold {ui.T.ok}")
                 what = ui.notes_text(s.notes) if s.notes else Text("— no description yet, enter to add one", style=ui.T.dim)
                 t.add_row(rng, Text(fmt_hm(s.minutes()), style=ui.T.accent2), what, key=str(s.id), height=None)
             # last row: always there, enter on it adds a block for this day
@@ -1331,7 +1331,7 @@ class MainScreen(Screen):
         week = self.query_one("#week", FocusPanel)
         week.border_title = f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}"
         if run:
-            week.border_subtitle = "● unsaved"
+            week.border_subtitle = "● in progress"
         else:
             week.border_subtitle = "approved" if r.approved else "pending approval"
         week.set_class(run is not None, "unsaved")
@@ -1342,20 +1342,20 @@ class MainScreen(Screen):
     def _status(self, run: Session | None, r: report.Report) -> None:
         draft = self.query_one("#new", Input).value.strip()
         left = Text()
-        if run or draft:
+        wide = self.size.width >= 110
+        if draft:  # the only thing that isn't on disk yet
             left.append("● unsaved  ", style=f"bold {ui.T.warn}")
-            bits = []
-            wide = self.size.width >= 110
+            left.append("typed item not added yet (enter)" if wide else "typed item (enter)", style=ui.T.muted)
             if run:
-                bits.append(f"block in progress since {fmt_time(run.start)}" + (" (out to log it)" if wide else ""))
-            if draft:
-                bits.append("typed item not added" if wide else "typed item")
-            left.append(" · ".join(bits), style=ui.T.muted)
-            if not draft and self.size.width >= 125:
-                left.append("   kept safe if pnch closes", style=ui.T.dim)
+                left.append(f"  ·  on the clock since {fmt_time(run.start)}", style=ui.T.dim)
+        elif run:
+            left.append("● on the clock  ", style=f"bold {ui.T.ok}")
+            left.append(f"since {fmt_time(run.start)}", style=ui.T.muted)
+            left.append("  ·  everything saved" + ("  (out to finish the block)" if wide else ""), style=ui.T.dim)
         else:
             left.append("✓ saved  ", style=f"bold {ui.T.ok}")
             left.append("week log is up to date", style=ui.T.dim)
+        self.status_text = left.plain
         right = Text("week approved 🔒" if r.approved else "week pending approval", style=ui.T.dim)
         if self.size.width < 100:
             right = Text("")
@@ -1714,7 +1714,7 @@ class PnchApp(App):
     }
     FocusPanel:focus { border: round $accent; background: $boost; }
     #week { height: 1fr; }
-    #week.unsaved { border-subtitle-color: $warning; border-subtitle-style: bold; }
+    #week.unsaved { border-subtitle-color: $success; border-subtitle-style: bold; }
 
     #slash {
         display: none; height: auto; max-height: 14; margin: 0 1; border: round $foreground 25%;
@@ -1765,7 +1765,7 @@ class PnchApp(App):
         border: round $foreground 25%; border-title-color: $accent; border-title-style: bold;
         border-subtitle-color: $text-muted; margin: 1 1 0 1; padding: 1 2; height: 1fr;
     }
-    #logbox.unsaved { border-subtitle-color: $warning; border-subtitle-style: bold; }
+    #logbox.unsaved { border-subtitle-color: $success; border-subtitle-style: bold; }
     #log, #daylog { height: 1fr; background: transparent; }
     #weekhead { height: 1; padding: 0 1; }
     #weeklist { height: 1fr; background: transparent; border: none; }

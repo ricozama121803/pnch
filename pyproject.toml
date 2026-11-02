@@ -15,8 +15,14 @@ dependencies = [
     "textual>=1.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 pnch = "pnch.cli:run"
 
 [tool.setuptools]
 packages = ["pnch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

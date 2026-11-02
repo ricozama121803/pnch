@@ -56,6 +56,10 @@ class Session:
         )
 
 
+class DataError(Exception):
+    """The data file can't be read."""
+
+
 class Store:
     def __init__(self, sessions: list[Session], weeks: dict[str, dict], next_id: int):
         self.sessions = sessions
@@ -68,8 +72,23 @@ class Store:
         path = data_file()
         if not path.exists():
             return cls([], {}, 1)
-        raw = json.loads(path.read_text())
-        sessions = [Session.from_dict(s) for s in raw.get("sessions", [])]
+        try:
+            raw = json.loads(path.read_text())
+            sessions = [Session.from_dict(s) for s in raw.get("sessions", [])]
+        except (ValueError, KeyError, TypeError) as e:
+            # a hand-edited or half-written file: fall back to the last good copy
+            bak = path.with_suffix(".json.bak")
+            try:
+                raw = json.loads(bak.read_text())
+                sessions = [Session.from_dict(s) for s in raw.get("sessions", [])]
+            except (OSError, ValueError, KeyError, TypeError):
+                raise DataError(f"{path} is damaged and there's no usable backup ({e}).") from e
+            broken = path.with_suffix(".json.broken")
+            path.replace(broken)
+            bak.replace(path)
+            import sys
+            print(f"pnch: {path.name} was damaged, restored the backup (damaged copy kept as {broken.name})",
+                  file=sys.stderr)
         next_id = raw.get("next_id") or (max((s.id for s in sessions), default=0) + 1)
         return cls(sessions, raw.get("weeks", {}), next_id)
 

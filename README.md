@@ -35,8 +35,9 @@ What you're working on goes in the separate **working on** box. `tab` switches b
 prompt bar → working on → today → week; `enter` on today or week opens it. In the working-on
 box, `↑` jumps into the item list (`f2` rename, `delete` remove, `esc` back).
 
-The status line under the prompt shows **● unsaved** while a block is in progress or you've typed
-an item without adding it, and **✓ saved** otherwise. Everything is written to disk immediately; if
+Everything is saved the moment you press enter. The status line under the prompt shows
+**● on the clock** while a block is running, **● unsaved** only when you've typed an item but not
+pressed enter yet, and **✓ saved** otherwise. Running blocks are tagged **● running**. If
 pnch closes unexpectedly while you're clocked in, the next launch tells you when it last saw you
 and lets you keep the clock running or end the block at that time. Half-typed items come back too.
 
@@ -102,3 +103,14 @@ Every week command takes `-w this | last | -2 | 10/14`.
 
 Weeks run Monday–Sunday. A session that crosses midnight counts on the day it started.
 Billed hours come from `invoice.billing` (`down` by default: 9h 20m → 9h), and you can override them at approval.
+
+## Running the tests
+
+```sh
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+```
+
+They cover typing odd times and dates, overlapping blocks, locked weeks, undo/redo, damaged data
+files, export file names, big multi-page PDFs, and the app itself driven with real key presses.
+Every test runs in its own temporary folder, so your real log is never touched.
