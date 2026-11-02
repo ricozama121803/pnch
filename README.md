@@ -3,8 +3,8 @@
 Clock in/out from the terminal, jot down what you did, and at the end of the week
 approve it and export a log + invoice PDF.
 
-Meet **Bucky**, the boxing beaver who throws jabs next to the ¡PNCH! banner while you work
-(turn him off with `mascot = false` under `[ui]` in the config).
+Meet **Bucky**, the boxing beaver next to the ¡PNCH! banner: he punches a tree until it falls,
+walks on to the next one, and does it again (turn him off with `mascot = false` under `[ui]`).
 
 ## Install
 
@@ -21,6 +21,7 @@ Run `pnch` on its own for the full-screen app. Type commands in the **prompt bar
 | --- | --- |
 | `in` / `in fixing the scraper` | punch in (timer, punch-in time and your item list appear) |
 | `out` | punch out: shows what you did, asks "Did you do anything else not listed?", confirm times, save |
+| `undo` / `redo` | take back your last change, or put it back (also `ctrl+z` / `ctrl+y`) |
 | `/vday [day]` | view a day, with its total next to the date (`/vday yesterday`) |
 | `/vweek [week]` | view the week's times (`/vweek last`) |
 | `/vlog [week]` | preview the week's log + invoice PDF |
@@ -42,6 +43,9 @@ export, past blocks…) · `ctrl+q` quit · `f1` all the rest.
 In the day view (`tab` to **today**, `enter`) pick a block and press `enter` to edit its descriptions.
 Every `enter` saves right away: adding, renaming (`f2`) or removing (`delete`) a line, and changing a
 finished block's times. `esc` just closes.
+
+If a block's times overlap another block, pnch shows both and lets you **merge** them, **fit** the new
+one into the free gap, **shorten** the other one, or **replace** it (or go back and change the times).
 
 Quitting always asks first. Off the clock: "Are you sure? Everything will be saved." On the clock:
 punch out (review and save the block, then quit) or stay clocked in (the clock keeps running while
@@ -71,6 +75,7 @@ pnch add 10/14 11pm 12:12am getting manual leads together
 pnch log                       # shows session #s
 pnch edit 3                    # interactive edit (or --start/--end/--note)
 pnch rm 3
+pnch undo                      # take back the last change (pnch redo puts it back)
 ```
 
 ## End of the week

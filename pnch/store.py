@@ -73,7 +73,7 @@ class Store:
         next_id = raw.get("next_id") or (max((s.id for s in sessions), default=0) + 1)
         return cls(sessions, raw.get("weeks", {}), next_id)
 
-    def save(self) -> None:
+    def save(self, record: bool = True) -> None:
         path = data_file()
         payload = {
             "version": 1,
@@ -81,12 +81,19 @@ class Store:
             "sessions": [s.to_dict() for s in sorted(self.sessions, key=lambda s: s.start)],
             "weeks": self.weeks,
         }
+        text = json.dumps(payload, indent=2)
+        before = path.read_text() if path.exists() else None
+        if before == text:
+            return
         if path.exists():
             shutil.copy2(path, path.with_suffix(".json.bak"))
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".data.", suffix=".json")
         with os.fdopen(fd, "w") as f:
-            json.dump(payload, f, indent=2)
+            f.write(text)
         os.replace(tmp, path)
+        if record:
+            from . import history
+            history.record(before, text)
 
     # ── sessions ──
     def running(self) -> Session | None:

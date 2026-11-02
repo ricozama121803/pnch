@@ -190,6 +190,8 @@ def add(
     e_dt = datetime.combine(d, parse_time(end))
     if e_dt <= s_dt:
         e_dt += timedelta(days=1)
+    if e_dt > now() + timedelta(minutes=1):
+        _fail(f"That block ends in the future ({fmt_range(s_dt, e_dt)}). Check the day or am/pm.")
     _ensure_unlocked(store, week_start(d))
     _check_overlap(store, s_dt, e_dt)
     notes = [" ".join(note)] if note else _ask_notes()
@@ -489,6 +491,32 @@ def export(
 
 
 # ── misc ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def undo(steps: int = typer.Argument(1, help="How many changes to undo.")):
+    """Undo your last change (punch in/out, items, edits, approvals…)."""
+    _load()
+    from . import history
+    for _ in range(max(1, steps)):
+        label = history.undo()
+        if label is None:
+            ui.info("Nothing left to undo.")
+            break
+        ui.ok(f"Undid: {label}")
+
+
+@app.command()
+def redo(steps: int = typer.Argument(1, help="How many changes to redo.")):
+    """Redo a change you just undid."""
+    _load()
+    from . import history
+    for _ in range(max(1, steps)):
+        label = history.redo()
+        if label is None:
+            ui.info("Nothing to redo.")
+            break
+        ui.ok(f"Redid: {label}")
+
 
 @app.command()
 def config(

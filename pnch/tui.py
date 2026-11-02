@@ -22,7 +22,7 @@ from textual.widgets import DataTable, Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from . import config as config_mod
-from . import mascot, report, ui
+from . import conflict, history, mascot, report, ui
 from .paths import data_dir
 from .store import Session, Store
 from .timeutil import (
@@ -40,6 +40,7 @@ SHORTCUTS = [
     ("prompt bar", "(bottom)"),
     ("  in [item]", "punch in, optionally with your first item"),
     ("  out", "punch out: review, add anything missing, save"),
+    ("  undo / redo", "take back your last change (or put it back)"),
     ("  /vday [day]", "view a day           /vday yesterday"),
     ("  /vweek [week]", "view the week's times  /vweek last"),
     ("  /vlog [week]", "preview the log + invoice PDF"),
@@ -49,6 +50,7 @@ SHORTCUTS = [
     ("↑ (in working on)", "jump into the item list: f2 rename · delete remove · esc back"),
     ("enter (on a panel)", "open today / the week"),
     ("ctrl+s", "punch in / punch out"),
+    ("ctrl+z · ctrl+y", "undo · redo"),
     ("ctrl+n", "jump to the working-on box"),
     ("ctrl+p", "command palette: approve, export, everything else"),
     ("ctrl+t", "fix the last block's times"),
@@ -230,19 +232,17 @@ class BlockEditor(ModalScreen[bool]):
     @on(Input.Submitted, "#day, #start, #end")
     def _next_field(self, event: Input.Submitted) -> None:
         # editing a finished block: times save as soon as they're all valid
+        order = ["day", "start", "end", "extra"]
+        nxt = self.query_one(f"#{order[order.index(event.input.id) + 1]}", Input)
         if self.mode == "edit" and not self.live and self.sid is not None:
             times = self._valid_times()
             if times is None:
                 return
-            store = Store.load()
-            s = store.get(self.sid)
+            s = Store.load().get(self.sid)
             if s and (s.start, s.end) != times:
-                s.start, s.end = times
-                store.save()
-                self._saved("times saved")
-        order = ["day", "start", "end", "extra"]
-        nxt = order[order.index(event.input.id) + 1]
-        self.query_one(f"#{nxt}", Input).focus()
+                self._commit(*times, then=lambda: (self._saved("times saved"), nxt.focus()))
+                return
+        nxt.focus()
 
     @on(Input.Submitted, "#extra")
     def _add_item(self, event: Input.Submitted) -> None:
@@ -296,11 +296,36 @@ class BlockEditor(ModalScreen[bool]):
             if store.is_approved(monday):
                 self._error(f"the week of {fmt_md(monday)} is approved and locked")
                 return None
-        o = store.overlap(st, en, exclude=self.sid)
-        if o:
-            self._error(f"overlaps {fmt_md(o.day)} {fmt_range(o.start, o.end)}")
-            return None
         return st, en
+
+    def _commit(self, st: datetime, en: datetime, then) -> None:
+        """Save this block's times + items, sorting out any overlap first."""
+        store = Store.load()
+        if conflict.overlapping(store, st, en, self.sid):
+            def chosen(how: str | None) -> None:
+                if how in (None, "back"):
+                    self._error("times overlap another block; change them or pick a fix")
+                    return
+                self.sid = conflict.apply(Store.load(), how, st, en, list(self.items), self.sid)
+                s = Store.load().get(self.sid)
+                self.items = list(s.notes)
+                self._refresh_items()
+                self.query_one("#day", Input).value = fmt_mdy(s.start.date())
+                self.query_one("#start", Input).value = fmt_time(s.start)
+                if s.end:
+                    self.query_one("#end", Input).value = fmt_time(s.end)
+                self.changed = True
+                then()
+            self.app.push_screen(ConflictScreen(st, en, self.sid), chosen)
+            return
+        s = store.get(self.sid) if self.sid else None
+        if s:
+            s.start, s.end, s.notes = st, en, list(self.items)
+        else:
+            self.sid = store.add(st, en, list(self.items)).id
+        store.save()
+        self.changed = True
+        then()
 
     def _persist_items(self, what: str = "saved") -> None:
         """Write the item list to disk right away."""
@@ -311,10 +336,7 @@ class BlockEditor(ModalScreen[bool]):
                 self.query_one("#error", Static).update(
                     Text("fill in valid times above and this block will save", style=ui.T.warn))
                 return
-            store = Store.load()
-            self.sid = store.add(times[0], times[1], list(self.items)).id
-            store.save()
-            self._saved("block saved")
+            self._commit(*times, then=lambda: self._saved("block saved"))
             return
         store = Store.load()
         s = store.get(self.sid)
@@ -344,15 +366,7 @@ class BlockEditor(ModalScreen[bool]):
         times = self._valid_times()
         if times is None:
             return
-        st, en = times
-        store = Store.load()
-        s = store.get(self.sid) if self.sid else None
-        if s:
-            s.start, s.end, s.notes = st, en, list(self.items)
-        else:
-            store.add(st, en, list(self.items))
-        store.save()
-        self.dismiss(True)
+        self._commit(*times, then=lambda: self.dismiss(True))
 
     def action_cancel(self) -> None:
         # anything already saved stays saved; a half-typed line is kept too
@@ -361,6 +375,57 @@ class BlockEditor(ModalScreen[bool]):
             self.items.insert(self.renaming, pending) if self.renaming is not None else self.items.append(pending)
             self._persist_items()
         self.dismiss(self.changed and self.mode != "out")
+
+
+class ConflictScreen(ModalScreen[str]):
+    """Two blocks claim the same time: pick how to fix it."""
+
+    KEYS = {"merge": "m", "trim": "t", "shorten": "s", "replace": "r"}
+    LABELS = {"merge": "merge them", "trim": "fit into the gap", "shorten": "shorten the other",
+              "replace": "replace it"}
+    BINDINGS = [
+        Binding("escape", "pick('back')", "change the times"),
+        Binding("m", "pick('merge')", show=False),
+        Binding("t", "pick('trim')", show=False),
+        Binding("s", "pick('shorten')", show=False),
+        Binding("r", "pick('replace')", show=False),
+    ]
+
+    def __init__(self, st: datetime, en: datetime, sid: int | None):
+        super().__init__()
+        store = Store.load()
+        self.st, self.en = st, en
+        self.others = conflict.overlapping(store, st, en, sid)
+        self.opts = conflict.options(store, st, en, sid)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm", classes="wide") as v:
+            v.border_title = "times overlap"
+            head = Text.assemble(("This block ", ui.T.text),
+                                 (f"{fmt_md(self.st.date())} {fmt_range(self.st, self.en)}", f"bold {ui.T.accent2}"),
+                                 (" overlaps:", ui.T.text))
+            for o in self.others:
+                head.append(f"\n  {fmt_range(o.start, o.end)}", style=f"bold {ui.T.warn}")
+                if o.notes:
+                    head.append(f"  {' · '.join(o.notes)}", style=ui.T.muted)
+            yield Static(head)
+            yield OptionList(*[
+                Option(Text.assemble((f"{self.KEYS[k]:<4}", f"bold {ui.T.accent}"), (f"{self.LABELS[k]:<20}", f"bold {ui.T.text}"),
+                                     (desc, ui.T.muted)), id=k)
+                for k, desc in self.opts.items()
+            ] + [Option(Text.assemble(("esc ", f"bold {ui.T.accent}"), (f"{'change the times':<20}", f"bold {ui.T.text}"),
+                                      ("go back and edit them", ui.T.muted)), id="back")], id="quitopts")
+
+    def on_mount(self) -> None:
+        self.query_one("#quitopts").focus()
+
+    @on(OptionList.OptionSelected, "#quitopts")
+    def _chosen(self, ev: OptionList.OptionSelected) -> None:
+        self.dismiss(ev.option.id)
+
+    def action_pick(self, what: str) -> None:
+        if what == "back" or what in self.opts:
+            self.dismiss(what)
 
 
 class Confirm(ModalScreen[bool]):
@@ -403,10 +468,16 @@ class KeysSheet(ModalScreen[None]):
 
 # ── week log ─────────────────────────────────────────────────────────────────
 
+class BlockTable(DataTable):
+    """A table of blocks; enter (shown in the footer as "edit") opens the selected one."""
+
+    BINDINGS = [Binding("enter", "select_cursor", "edit")]
+
+
 class LogScreen(Screen):
     BINDINGS = [
         Binding("escape", "app.pop_screen", "back"),
-        Binding("enter,f2", "edit", "edit"),
+        Binding("f2", "edit", "edit", show=False),
         Binding("ctrl+n", "new", "new block"),
         Binding("delete", "delete", "delete"),
         Binding("left_square_bracket", "week(-1)", "prev week", show=False),
@@ -420,7 +491,7 @@ class LogScreen(Screen):
     def compose(self) -> ComposeResult:
         with Vertical(id="logbox") as v:
             v.border_title = "week log"
-            yield DataTable(id="log", cursor_type="row", zebra_stripes=False)
+            yield BlockTable(id="log", cursor_type="row", zebra_stripes=False)
             yield Static(id="logtotal")
         yield Footer()
 
@@ -594,8 +665,9 @@ class FocusPanel(Static, can_focus=True):
 
 class DayScreen(Screen):
     BINDINGS = [
-        Binding("escape,q", "app.pop_screen", "back"),
-        Binding("enter,f2", "edit", "edit / add description"),
+        Binding("escape", "app.pop_screen", "back"),
+        Binding("q", "app.pop_screen", "back", show=False),
+        Binding("f2", "edit", "edit", show=False),
         Binding("ctrl+n", "new", "new block"),
         Binding("delete", "delete", "delete block"),
         Binding("left_square_bracket", "day(-1)", "prev day"),
@@ -609,7 +681,7 @@ class DayScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="logbox"):
-            yield DataTable(id="daylog", cursor_type="row", zebra_stripes=False)
+            yield BlockTable(id="daylog", cursor_type="row", zebra_stripes=False)
             yield Static(id="dayempty")
         yield Footer()
 
@@ -900,7 +972,7 @@ class MainScreen(Screen):
         yield OptionList(id="slash")
         with Horizontal(id="prompt"):
             yield Static("❯", id="caret")
-            yield CommandInput(id="cmd", placeholder="in · out · / for views and config")
+            yield CommandInput(id="cmd", placeholder="in · out · undo · / for views and config")
         yield Static(id="status")
         yield Footer()
 
@@ -924,7 +996,7 @@ class MainScreen(Screen):
 
     def on_resize(self) -> None:
         self.query_one("#top").display = self.cfg["ui"].get("banner", True) and self.size.height >= 36
-        self.query_one("#mascot").display = self.cfg["ui"].get("mascot", True) and self.size.width >= 100
+        self.query_one("#mascot").display = self.cfg["ui"].get("mascot", True) and self.size.width >= 104
         self._layout_side()
         self.call_after_refresh(self.reload)
 
@@ -1199,9 +1271,13 @@ class MainScreen(Screen):
                 self._start(rest.strip())
         elif word == "out":
             self._punch_out()
+        elif word in ("undo", "redo"):
+            n = int(rest) if rest.strip().isdigit() else 1
+            for _ in range(n):
+                getattr(self.app, f"action_{word}")()
         else:
             event.input.value = text
-            self.app.notify("Commands are [b]in[/b], [b]out[/b] or [b]/…[/b]. "
+            self.app.notify("Commands are [b]in[/b], [b]out[/b], [b]undo[/b], [b]redo[/b] or [b]/…[/b]. "
                             "Items go in the working-on box ([b]tab[/b]).", severity="warning")
 
     def slash(self, cmd: str, arg: str) -> None:
@@ -1321,6 +1397,8 @@ class PnchCommands(Provider):
             ("View day", "/vday", lambda: main.slash("/vday", "")),
             ("View week", "/vweek · ctrl+l", main.action_log),
             ("Preview log + invoice", "/vlog · f5", main.action_preview),
+            ("Undo", "ctrl+z · or type undo", app.action_undo),
+            ("Redo", "ctrl+y · or type redo", app.action_redo),
             ("Config: rate and theme", "/config", main.action_config),
             ("Add a past block", "forgot to punch in? log it here", lambda: app.push_screen(
                 BlockEditor(None, "add"), lambda ok: main.reload())),
@@ -1352,6 +1430,8 @@ class PnchCommands(Provider):
 class PnchApp(App):
     TITLE = "pnch"
     BINDINGS = [
+        Binding("ctrl+z", "undo", "undo", show=False),
+        Binding("ctrl+y,ctrl+shift+z", "redo", "redo", show=False),
         Binding("ctrl+q", "quit", "quit", priority=True),
         Binding("ctrl+p", "command_palette", "commands", priority=True, show=False),
     ]
@@ -1361,7 +1441,7 @@ class PnchApp(App):
     Screen { background: $background; }
     #top { height: auto; }
     #banner { width: auto; height: auto; padding: 3 2 0 2; }
-    #mascot { width: 42; height: auto; padding: 1 0 0 3; }
+    #mascot { width: 50; height: auto; padding: 1 0 0 3; }
     #main { height: 1fr; padding: 0 1; }
     #now {
         width: 3fr; border: round $foreground 25%; border-title-color: $accent;
@@ -1394,7 +1474,7 @@ class PnchApp(App):
     #cmd { border: none; height: 1; padding: 0; background: transparent; }
     #status { height: 1; padding: 0 3; }
 
-    BlockEditor, Confirm, KeysSheet, ConfigScreen, RecoverScreen, QuitScreen {
+    BlockEditor, Confirm, KeysSheet, ConfigScreen, RecoverScreen, QuitScreen, ConflictScreen {
         align: center middle; background: $background 60%;
     }
     #dialog {
@@ -1418,6 +1498,7 @@ class PnchApp(App):
     #hint { color: $text-muted; margin-top: 1; }
     #keys { width: 96; }
     #confirm { width: 72; }
+    #confirm.wide { width: 80; }
     #confirm, #keys {
         max-width: 95%; height: auto; border: round $accent; border-title-color: $accent;
         border-title-style: bold; background: $surface; padding: 1 3;
@@ -1501,6 +1582,32 @@ class PnchApp(App):
 
         main.reload()
         self.push_screen(QuitScreen(main.running, draft), chosen)
+
+    def action_undo(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return  # finish or close the dialog first
+        label = history.undo()
+        self.notify(f"↶ undid: {label}" if label else "Nothing left to undo.")
+        self._refresh_screens()
+
+    def action_redo(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        label = history.redo()
+        self.notify(f"↷ redid: {label}" if label else "Nothing to redo.")
+        self._refresh_screens()
+
+    def _refresh_screens(self) -> None:
+        for scr in self.screen_stack:
+            if hasattr(scr, "_shown"):
+                scr._shown = None
+            if hasattr(scr, "_notes_shown"):
+                scr._notes_shown = None
+            if hasattr(scr, "reload"):
+                try:
+                    scr.reload()
+                except Exception:  # noqa: BLE001  (a screen that isn't mounted yet)
+                    pass
 
     def _finish_quit(self) -> None:
         draft = self.main.query_one("#new", Input).value.strip()
