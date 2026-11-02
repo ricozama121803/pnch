@@ -3,8 +3,9 @@
 Clock in/out from the terminal, jot down what you did, and at the end of the week
 approve it and export a log + invoice PDF.
 
-Meet **Bucky**, the boxing beaver next to the ¡PNCH! banner: he punches a tree until it falls,
-walks on to the next one, and does it again (turn him off with `mascot = false` under `[ui]`).
+Meet **Bucky**, the boxing beaver next to the ¡PNCH! banner. He naps while you're off the clock;
+punch in and the fight bell wakes him up to punch down trees until you punch out
+(turn him off with `mascot = false` under `[ui]`).
 
 ## Install
 
@@ -24,8 +25,9 @@ Run `pnch` on its own for the full-screen app. Type commands in the **prompt bar
 | `undo` / `redo` | take back your last change, or put it back (also `ctrl+z` / `ctrl+y`) |
 | `/vday [day]` | view a day, with its total next to the date (`/vday yesterday`) |
 | `/vweek [week]` | view the week's times (`/vweek last`) |
-| `/vlog [week]` | preview the week's log + invoice PDF |
-| `/config` | hourly rate and color theme (live preview) |
+| `/previewLogs [week]` | preview the week's log + invoice PDF |
+| `/exportLogs [week]` | save the PDF into your export folder (approves the week first if needed) |
+| `/config` | hourly rate, color theme (live preview), export folder, file-name style |
 | `/help` | everything |
 
 What you're working on goes in the separate **working on** box. `tab` switches between the
@@ -40,6 +42,7 @@ and lets you keep the clock running or end the block at that time. Half-typed it
 Shortcuts: `ctrl+s` punch in/out · `ctrl+n` working-on box · `ctrl+p` command palette (approve,
 export, past blocks…) · `ctrl+q` quit · `f1` all the rest.
 
+The day and week views end with a timeline bar showing when each block happened.
 In the day view (`tab` to **today**, `enter`) pick a block and press `enter` to edit its descriptions.
 Every `enter` saves right away: adding, renaming (`f2`) or removing (`delete`) a line, and changing a
 finished block's times. `esc` just closes.

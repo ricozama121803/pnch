@@ -78,3 +78,36 @@ def build(store: Store, cfg: dict, monday: date, at: datetime | None = None) -> 
         summary=store.last_summary(),
         rate=float(inv["rate"]),
     )
+
+
+# ── export file names ────────────────────────────────────────────────────────
+
+NAMING_PRESETS = [
+    "logsweek{start}-{end}.pdf",
+    "{start_iso}_to_{end_iso}.pdf",
+    "invoice-{number}_{start_iso}.pdf",
+    "{name}_week_{start}-{end}.pdf",
+]
+
+
+def export_filename(cfg: dict, r: Report, pattern: str | None = None) -> str:
+    """Fill in a naming pattern. Placeholders: {start} {end} (10_12), {start_iso} {end_iso}
+    (2026-10-12), {number} (invoice #), {name} (your name), {year}."""
+    import re
+    name = re.sub(r"[^A-Za-z0-9]+", "-", cfg["you"].get("name", "")).strip("-") or "me"
+    values = {
+        "start": f"{r.monday.month}_{r.monday.day}", "end": f"{r.sunday.month}_{r.sunday.day}",
+        "start_iso": r.monday.isoformat(), "end_iso": r.sunday.isoformat(),
+        "number": r.invoice_number, "name": name, "year": r.monday.year,
+    }
+    try:
+        out = (pattern or cfg["export"]["filename"]).format(**values)
+    except (KeyError, IndexError, ValueError):
+        out = NAMING_PRESETS[0].format(**values)
+    out = out.replace("/", "-")
+    return out if out.lower().endswith(".pdf") else out + ".pdf"
+
+
+def export_path(cfg: dict, r: Report):
+    from pathlib import Path
+    return Path(cfg["export"]["dir"]).expanduser() / export_filename(cfg, r)

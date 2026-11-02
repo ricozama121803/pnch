@@ -34,7 +34,8 @@ footer = [
 
 [export]
 dir = "~/Documents/pnch"
-filename = "logsweek{start}-{end}.pdf"  # {start}/{end} become 10_12 / 10_18 (Mon/Sun)
+filename = "logsweek{start}-{end}.pdf"  # pick a style in /config, or use: {start} {end} (10_12)
+                                        # {start_iso} {end_iso} (2026-10-12) {number} {name} {year}
 
 [ui]
 theme = "catppuccin"                    # catppuccin | nord | gruvbox | tokyonight | rosepine

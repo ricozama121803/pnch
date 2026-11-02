@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 import sys
 from datetime import date, datetime, timedelta
 
@@ -43,8 +44,9 @@ SHORTCUTS = [
     ("  undo / redo", "take back your last change (or put it back)"),
     ("  /vday [day]", "view a day           /vday yesterday"),
     ("  /vweek [week]", "view the week's times  /vweek last"),
-    ("  /vlog [week]", "preview the log + invoice PDF"),
-    ("  /config", "hourly rate and color theme"),
+    ("  /previewLogs [week]", "preview the log + invoice PDF"),
+    ("  /exportLogs [week]", "save the PDF to your export folder"),
+    ("  /config", "rate, theme, export folder, file names"),
     ("", ""),
     ("tab", "switch: prompt bar → working on → today → week"),
     ("↑ (in working on)", "jump into the item list: f2 rename · delete remove · esc back"),
@@ -492,6 +494,7 @@ class LogScreen(Screen):
         with Vertical(id="logbox") as v:
             v.border_title = "week log"
             yield BlockTable(id="log", cursor_type="row", zebra_stripes=False)
+            yield Static(id="weektl")
             yield Static(id="logtotal")
         yield Footer()
 
@@ -522,6 +525,31 @@ class LogScreen(Screen):
             t.add_row(day, str(s.id), rng, fmt_hm(s.minutes()),
                       Text(" · ".join(s.notes) or "—", overflow="ellipsis", no_wrap=True), key=str(s.id))
         self.query_one("#logtotal", Static).update(ui.totals_line(r))
+        self._timeline(store)
+
+    def _timeline(self, store: Store) -> None:
+        from .timeutil import week_days
+        days = week_days(self.monday)
+        per_day = [store.on_day(d) for d in days]
+        lo, hi = 8, 18
+        for blocks in per_day:
+            a, b = ui.day_range(blocks)
+            lo, hi = min(lo, a), max(hi, b)
+        label_w, tail_w = 11, 9
+        w = max(10, (self.query_one("#logbox").content_size.width or 80) - label_w - tail_w - 2)
+        rows = []
+        for d, blocks in zip(days, per_day):
+            today = d == date.today()
+            row = Text(f"{DAY_ABBR[d.weekday()]:<6}{fmt_md(d):<5}", style=f"bold {ui.T.text}" if today else ui.T.muted)
+            row.append_text(ui.timeline_bar(blocks, d, w, lo, hi))
+            mins = sum(s.minutes() for s in blocks)
+            row.append(f"{fmt_hm(mins):>{tail_w}}" if mins else "", style=ui.T.accent2)
+            rows.append(row)
+        rows.append(Text(" " * label_w) + ui.timeline_axis(w, lo, hi))
+        self.query_one("#weektl", Static).update(Group(Text(""), *rows))
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.reload)
 
     def _selected(self) -> Session | None:
         t = self.query_one(DataTable)
@@ -597,8 +625,9 @@ def read_heartbeat() -> dict | None:
 SLASH = [
     ("/vday", "view a day's blocks", "/vday yesterday"),
     ("/vweek", "view the week's times", "/vweek last"),
-    ("/vlog", "preview the week's log + invoice PDF", "/vlog last"),
-    ("/config", "hourly rate and color theme", ""),
+    ("/previewLogs", "preview the week's log + invoice PDF", "/previewLogs last"),
+    ("/exportLogs", "save the PDF to your export folder", "/exportLogs last"),
+    ("/config", "rate, theme, export folder, file names", ""),
     ("/help", "commands and shortcuts", ""),
 ]
 WORDS = [("in", "punch in", "in fixing the scraper"), ("out", "punch out", "")]
@@ -683,6 +712,7 @@ class DayScreen(Screen):
         with Vertical(id="logbox"):
             yield BlockTable(id="daylog", cursor_type="row", zebra_stripes=False)
             yield Static(id="dayempty")
+            yield Static(id="daytl")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -731,6 +761,16 @@ class DayScreen(Screen):
         t.display = bool(blocks)
         self.query_one("#dayempty", Static).update(
             Text("nothing logged this day · ctrl+n to add a block", style=ui.T.dim) if not blocks else "")
+        self._timeline(blocks)
+
+    def _timeline(self, blocks) -> None:
+        w = (self.query_one("#logbox").content_size.width or 80) - 2
+        lo, hi = ui.day_range(blocks)
+        self.query_one("#daytl", Static).update(
+            Group(ui.timeline_bar(blocks, self.day, w, lo, hi), ui.timeline_axis(w, lo, hi)))
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.reload)
 
     def _selected(self) -> Session | None:
         t = self.query_one(DataTable)
@@ -802,14 +842,31 @@ class ConfigScreen(ModalScreen[bool]):
                                      *[("██", c) for c in ui.ramp(6, ui.THEMES[name]["grad"])]), id=name)
                 for name in ui.THEMES
             ], id="themes")
+            yield Label("export folder", classes="field")
+            yield Input(self.cfg["export"]["dir"], id="folder", placeholder="~/Documents/pnch")
+            yield Label("file names  (example for this week)", classes="field")
+            yield OptionList(*self._naming_options(), id="naming")
             yield Static(id="error")
-            yield Static(Text.assemble(("ctrl+s", "bold"), " save · ", ("esc", "bold"), " cancel · ",
-                                       ("ctrl+o", "bold"), " full config file (name, client, address…)"), id="hint")
+            yield Static(Text.assemble(("enter", "bold"), " next · ", ("ctrl+s", "bold"), " save · ",
+                                       ("esc", "bold"), " cancel · ", ("ctrl+o", "bold"),
+                                       " full config file (name, client, address…)"), id="hint")
+
+    def _naming_options(self) -> list[Option]:
+        r = report.build(Store.load(), self.cfg, week_start(date.today()))
+        current = self.cfg["export"]["filename"]
+        patterns = list(report.NAMING_PRESETS)
+        if current not in patterns:
+            patterns.insert(0, current)
+        self.patterns = patterns
+        return [Option(Text.assemble((report.export_filename(self.cfg, r, pat), f"bold {ui.T.text}"),
+                                     ("   custom" if pat not in report.NAMING_PRESETS else "", ui.T.dim)), id=str(i))
+                for i, pat in enumerate(patterns)]
 
     def on_mount(self) -> None:
         ol = self.query_one("#themes", OptionList)
         names = list(ui.THEMES)
         ol.highlighted = names.index(self.theme0) if self.theme0 in names else 0
+        self.query_one("#naming", OptionList).highlighted = self.patterns.index(self.cfg["export"]["filename"])
         self.query_one("#rate", Input).focus()
 
     @on(OptionList.OptionHighlighted, "#themes")
@@ -821,6 +878,14 @@ class ConfigScreen(ModalScreen[bool]):
         self.query_one("#themes").focus()
 
     @on(OptionList.OptionSelected, "#themes")
+    def _theme_done(self) -> None:
+        self.query_one("#folder").focus()
+
+    @on(Input.Submitted, "#folder")
+    def _folder_done(self) -> None:
+        self.query_one("#naming").focus()
+
+    @on(OptionList.OptionSelected, "#naming")
     def _picked(self) -> None:
         self.action_save()
 
@@ -834,8 +899,17 @@ class ConfigScreen(ModalScreen[bool]):
             return
         ol = self.query_one("#themes", OptionList)
         theme = ol.get_option_at_index(ol.highlighted).id
+        folder = self.query_one("#folder", Input).value.strip() or "~/Documents/pnch"
+        try:
+            Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.query_one("#error", Static).update(Text(f"✗ can't use that folder: {e.strerror}", style=f"bold {ui.T.err}"))
+            return
+        naming = self.query_one("#naming", OptionList)
         config_mod.set_value("invoice", "rate", rate)
         config_mod.set_value("ui", "theme", theme)
+        config_mod.set_value("export", "dir", folder)
+        config_mod.set_value("export", "filename", self.patterns[naming.highlighted or 0])
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -1026,10 +1100,21 @@ class MainScreen(Screen):
             self.app.notify("pnch closed unexpectedly last time. Nothing was lost.", title="recovered")
 
     def _mascot_tick(self) -> None:
+        """Asleep off the clock; the bell wakes him when you punch in; then he fights."""
+        running = getattr(self, "running", None) is not None
+        mode = getattr(self, "_mode", None)
+        if mode is None:
+            self._mode, self._frame = ("fight" if running else "sleep"), 0
+        elif running and mode == "sleep":
+            self._mode, self._frame = "bell", 0
+        elif not running and mode != "sleep":
+            self._mode, self._frame = "sleep", 0
+        elif mode == "bell" and self._frame >= mascot.BELL_LEN:
+            self._mode, self._frame = "fight", 0
         m = self.query_one("#mascot", Static)
         if m.display and self.query_one("#top").display and self.app.screen is self:
             self._frame += 1
-            m.update(mascot.frame(self._frame))
+            m.update(mascot.frame(self._frame, self._mode))
 
     def _tick(self) -> None:
         self.reload()
@@ -1231,10 +1316,10 @@ class MainScreen(Screen):
         if not v.startswith("/") or " " in v:
             menu.display = False
             return
-        matches = [c for c in SLASH if c[0].startswith(v.lower())]
+        matches = [c for c in SLASH if c[0].lower().startswith(v.lower())]
         menu.clear_options()
         menu.add_options([
-            Option(Text.assemble((f"{cmd:<9}", f"bold {ui.T.accent}"), (f"  {what}", ui.T.text),
+            Option(Text.assemble((f"{cmd:<13}", f"bold {ui.T.accent}"), (f"  {what}", ui.T.text),
                                  (f"   {eg}" if eg else "", ui.T.dim)), id=cmd)
             for cmd, what, eg in matches
         ])
@@ -1257,7 +1342,7 @@ class MainScreen(Screen):
             return
         if text.startswith("/"):
             cmd, _, arg = text.partition(" ")
-            if cmd.lower() not in {c[0] for c in SLASH} and menu.display and menu.highlighted is not None:
+            if cmd.lower() not in {c[0].lower() for c in SLASH} and menu.display and menu.highlighted is not None:
                 cmd = menu.get_option_at_index(menu.highlighted).id
             menu.display = False
             self.slash(cmd.lower(), arg.strip())
@@ -1281,13 +1366,16 @@ class MainScreen(Screen):
                             "Items go in the working-on box ([b]tab[/b]).", severity="warning")
 
     def slash(self, cmd: str, arg: str) -> None:
+        cmd = cmd.lower()
         try:
             if cmd == "/vday":
                 self.app.push_screen(DayScreen(parse_date(arg) if arg else date.today()))
             elif cmd == "/vweek":
                 self.app.push_screen(LogScreen(parse_week(arg or None)))
-            elif cmd == "/vlog":
+            elif cmd in ("/previewlogs", "/vlog"):
                 self.app.run_cli("preview", *(["-w", arg] if arg else []))
+            elif cmd == "/exportlogs":
+                self.export_logs(arg)
             elif cmd == "/config":
                 self.action_config()
             elif cmd == "/help":
@@ -1306,6 +1394,13 @@ class MainScreen(Screen):
     def _add_item(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         if not text:
+            return
+        if text.lower() in ("out", "in"):  # a command typed in the wrong box: just do it
+            event.input.value = ""
+            if text.lower() == "out":
+                self._punch_out()
+            elif not self.running:
+                self._start("")
             return
         if not self.running:
             self.app.notify("Punch in first: type [b]in[/b] in the prompt bar (your text is kept).")
@@ -1366,8 +1461,8 @@ class MainScreen(Screen):
         def done(saved: bool | None) -> None:
             self.app.reload_config()
             if saved:
-                self.app.notify(f"rate ${float(self.cfg['invoice']['rate']):g}/hr · theme {self.cfg['ui']['theme']}",
-                                title="✓ config saved")
+                self.app.notify(f"rate ${float(self.cfg['invoice']['rate']):g}/hr · theme {self.cfg['ui']['theme']}"
+                                f" · PDFs → {self.cfg['export']['dir']}", title="✓ config saved")
         self.app.push_screen(ConfigScreen(self.cfg), done)
 
     def action_keys(self) -> None:
@@ -1375,6 +1470,31 @@ class MainScreen(Screen):
 
     def action_log(self) -> None:
         self.app.push_screen(LogScreen())
+
+    def export_logs(self, arg: str = "") -> None:
+        """Save the week's PDF into the export folder (approving it first if needed)."""
+        store = Store.load()
+        if arg:
+            monday = parse_week(arg)
+        else:
+            cur = week_start(date.today())
+            monday = cur if store.in_week(cur) or not store.in_week(cur - timedelta(weeks=1)) else cur - timedelta(weeks=1)
+        if not store.in_week(monday):
+            self.app.notify(f"Nothing logged for the week of {fmt_md(monday)}.", severity="warning")
+            return
+        if not store.is_approved(monday):
+            self.app.notify("This week isn't approved yet, so approve it first (you'll be asked to export at the end).")
+            self.app.run_cli("approve", "-w", monday.isoformat())
+            return
+        from . import pdf
+        r = report.build(store, self.cfg, monday)
+        path = report.export_path(self.cfg, r)
+        pdf.render(r, self.cfg, path)
+        store = Store.load()
+        store.weeks[monday.isoformat()].setdefault("exports", []).append(
+            {"path": str(path), "at": datetime.now().isoformat(timespec="seconds")})
+        store.save()
+        self.app.notify(str(path).replace(str(Path.home()), "~"), title="✓ PDF saved", timeout=8)
 
     def action_preview(self) -> None:
         self.app.run_cli("preview")
@@ -1396,7 +1516,8 @@ class PnchCommands(Provider):
             ("Add item", "ctrl+n · what you're working on", main.action_new_item),
             ("View day", "/vday", lambda: main.slash("/vday", "")),
             ("View week", "/vweek · ctrl+l", main.action_log),
-            ("Preview log + invoice", "/vlog · f5", main.action_preview),
+            ("Preview log + invoice", "/previewLogs · f5", main.action_preview),
+            ("Export log + invoice PDF", "/exportLogs", lambda: main.export_logs()),
             ("Undo", "ctrl+z · or type undo", app.action_undo),
             ("Redo", "ctrl+y · or type redo", app.action_redo),
             ("Config: rate and theme", "/config", main.action_config),
@@ -1404,7 +1525,6 @@ class PnchCommands(Provider):
                 BlockEditor(None, "add"), lambda ok: main.reload())),
             ("Edit last block times", "ctrl+t", main.action_edit_block),
             ("Approve week", "review, set billed hours, lock it", lambda: app.run_cli("approve")),
-            ("Export PDF", "for an approved week", lambda: app.run_cli("export")),
             ("Unapprove week", "unlock a week to edit it", lambda: app.run_cli("unapprove")),
             ("Weeks history", "hours, invoices, status", lambda: app.run_cli("weeks")),
             ("Edit full config file", "name, client, address…", lambda: app.run_cli("config", "--edit", wait=False)),
@@ -1492,8 +1612,13 @@ class PnchApp(App):
     .field { color: $text-muted; margin-top: 1; }
     #quitopts { height: auto; margin-top: 1; background: transparent; border: none; }
     #quitopts > .option-list--option-highlighted { background: $boost; text-style: none; }
-    #themes { height: auto; background: transparent; border: round $foreground 20%; }
-    #themes:focus { border: round $accent; }
+    #themes, #naming { height: auto; background: transparent; border: round $foreground 20%; }
+    #themes:focus, #naming:focus { border: round $accent; }
+    #themes > .option-list--option-highlighted, #naming > .option-list--option-highlighted {
+        background: $boost; text-style: none;
+    }
+    #folder { border: tall $foreground 20%; background: transparent; }
+    #folder:focus { border: tall $accent; }
     #error { height: auto; margin-top: 1; }
     #hint { color: $text-muted; margin-top: 1; }
     #keys { width: 96; }
@@ -1510,6 +1635,7 @@ class PnchApp(App):
     #logbox.unsaved { border-subtitle-color: $warning; border-subtitle-style: bold; }
     #log, #daylog { height: 1fr; background: transparent; }
     #dayempty { height: auto; }
+    #daytl, #weektl { height: auto; margin-top: 1; }
     #logtotal { height: auto; margin-top: 1; }
     """
 

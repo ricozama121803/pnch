@@ -159,7 +159,7 @@ def _paint_bucky(m, x, y, t):
     if m == "b":
         return _FUR[(x * 5 + y * 3 + t // 4) % len(_FUR)], fur
     return {
-        "l": ("%", C["belly"]), "e": ("●", C["eye"]), "n": ("@", C["nose"]), "t": ("▌", C["teeth"]),
+        "l": ("%", C["belly"]), "e": ("●", C["eye"]), "c": ("-", C["foot"]), "n": ("@", C["nose"]), "t": ("▌", C["teeth"]),
         "w": ("=", C["arm"]), "k": ("#" if (x + y) % 2 else "x", C["tail"]), "f": ("▀", C["foot"]),
         "g": ("@" if (x + y + t // 2) % 5 else "%", C["glove"] if (x + y + t // 2) % 5 else C["glove_hi"]),
     }.get(m, ("?", fur))
@@ -178,7 +178,7 @@ def _paint_tree(m, x, y, t):
     return "?", C["trunk"]
 
 
-def frame(i: int) -> Text:
+def _fight(i: int) -> Text:
     bucky, tree, tx, stump_x, walked, effect, k = _state(i)
     canvas = [[(" ", "") for _ in range(W)] for _ in range(H)]
 
@@ -213,6 +213,130 @@ def frame(i: int) -> Text:
         if y < H - 1:
             out.append("\n")
     return out
+
+
+# ── asleep / the bell ────────────────────────────────────────────────────────
+# Bucky naps sitting down, gloves on the ground. c = closed eye, e = open eye, ! = startled
+SLEEP = [
+    "                   ",
+    "      oo           ",
+    "    obbbbo         ",
+    "   obbbbbcoo       ",
+    " kkobbbbbbbbbn     ",
+    "kkkkobbllbbbtt     ",
+    " kk obbllllbwggg   ",
+    "     ff  ff  ggg   ",
+]
+SLEEP_B = [  # breathing out: a little lower and rounder
+    "                   ",
+    "                   ",
+    "      oo           ",
+    "    obbbbocoo      ",
+    " kkobbbbbbbbbbn    ",
+    "kkkkobbllbbbbtt    ",
+    " kk obbllllllbwggg ",
+    "     ff  ff   ggg  ",
+]
+SLEEP_B[3] = "    obbbbbcoo      "
+AWAKE = [row.replace("c", "e") for row in SLEEP]
+
+# the fight bell, hanging on a post at the right; a = bell, p = post, d = clapper
+BELL = [
+    "  qqqqq ",
+    "    p   ",
+    "  aaaaa ",
+    " aaaaaaa",
+    " aaaaaaa",
+    "aaaaaaaaa",
+    "    d   ",
+]
+BELL_X = 34
+BELL_LEN = 22          # ticks: ding ding (shaking), Bucky jolts awake, then stands up
+
+
+def _paint_bell(m, x, y, t):
+    if m == "q":
+        return "=", C["trunk"]
+    if m == "p":
+        return "|", C["trunk"]
+    if m == "d":
+        return "o", C["spark"]
+    return "@%#@%"[(x + y + t) % 5], ("#f9e2af" if (x + y + t) % 3 else "#e5c07b")
+
+
+def _scene(i: int, bucky, extras) -> Text:
+    canvas = [[(" ", "") for _ in range(W)] for _ in range(H)]
+    for x in range(W):
+        canvas[GROUND][x] = (_GROUND[x % len(_GROUND)], C["ground"])
+    _blit(canvas, bucky, BX, GROUND - len(bucky), _paint_bucky, i)
+    for x, y, ch, color in extras:
+        if 0 <= x < W and 0 <= y < H:
+            canvas[y][x] = (ch, color)
+    out = Text(no_wrap=True, overflow="crop")
+    for y, row in enumerate(canvas):
+        for ch, style in row:
+            out.append(ch, style=style or None)
+        if y < H - 1:
+            out.append("\n")
+    return out
+
+
+def sleep_frame(i: int) -> Text:
+    pose = SLEEP if (i // 10) % 2 == 0 else SLEEP_B
+    extras = []
+    for n in range(3):                      # three z's drifting up and to the right
+        k = (i + n * 9) % 27
+        x, y = BX + 12 + k // 3, 4 - k // 6
+        ch = "z" if k < 9 else ("z" if k < 18 else "Z")
+        if y >= 0:
+            extras.append((x, y, ch, ui.ramp(3, [ui.T.muted, ui.T.accent2])[min(2, k // 9)]))
+    return _scene(i, pose, extras)
+
+
+def bell_frame(i: int) -> Text:
+    """i runs 0..BELL_LEN-1: the bell rings, Bucky wakes with a start, then gets up."""
+    shake = (-1, 1)[i % 2] if i < 12 else 0
+    if i < 6:
+        bucky = SLEEP
+    elif i < 14:
+        bucky = AWAKE
+    else:
+        bucky = GUARD
+    canvas = [[(" ", "") for _ in range(W)] for _ in range(H)]
+    for x in range(W):
+        canvas[GROUND][x] = (_GROUND[x % len(_GROUND)], C["ground"])
+    _blit(canvas, bucky, BX, GROUND - len(bucky), _paint_bucky, i)
+    _blit(canvas, BELL, BELL_X + shake, 1, _paint_bell, i)
+    for y in range(8, GROUND):
+        canvas[y][BELL_X + 4] = ("|", C["trunk"])
+    if i < 12:                               # DING! and sound waves
+        word = "DING!" if (i // 3) % 2 == 0 else "DING!!"
+        for n, ch in enumerate(word):
+            x = BELL_X - 7 + n
+            if 0 <= x < W:
+                canvas[1 + (i % 2)][x] = (ch, f"bold {C['spark']}")
+        for n, (dx, dy) in enumerate([(-2, 4), (-3, 5), (10, 4), (11, 5)]):
+            x, y = BELL_X + dx, dy
+            if 0 <= x < W and (i + n) % 2 == 0:
+                canvas[y][x] = (")" if dx > 0 else "(", C["spark"])
+    if 6 <= i < 14:                          # "!" over his head
+        canvas[2][BX + 9] = ("!", f"bold {C['spark']}")
+    out = Text(no_wrap=True, overflow="crop")
+    for y, row in enumerate(canvas):
+        for ch, style in row:
+            out.append(ch, style=style or None)
+        if y < H - 1:
+            out.append("\n")
+    return out
+
+
+def frame(i: int, mode: str = "fight") -> Text:
+    """mode: sleep (off the clock) · bell (just punched in) · fight (on the clock)"""
+    if mode == "sleep":
+        return sleep_frame(i)
+    if mode == "bell":
+        return bell_frame(min(i, BELL_LEN - 1))
+    return _fight(i)
 
 
 def frame_count() -> int:

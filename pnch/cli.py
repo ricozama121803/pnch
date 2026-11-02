@@ -94,13 +94,7 @@ def _ask_notes(prompt: str = "What did you work on?") -> list[str]:
 
 
 def _export_path(cfg: dict, r: report.Report) -> Path:
-    exp = cfg["export"]
-    name = exp["filename"].format(
-        start=f"{r.monday.month}_{r.monday.day}",
-        end=f"{r.sunday.month}_{r.sunday.day}",
-        number=r.invoice_number,
-    )
-    return Path(exp["dir"]).expanduser() / name
+    return report.export_path(cfg, r)
 
 
 # ── clocking ─────────────────────────────────────────────────────────────────

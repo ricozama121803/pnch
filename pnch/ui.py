@@ -360,3 +360,68 @@ def banner(word: str = "¡PNCH!") -> Text:
         if i < len(rows) - 1:
             out.append("\n")
     return out
+
+
+# ── timeline bar ─────────────────────────────────────────────────────────────
+
+def _hour_label(h: int) -> str:
+    h %= 24
+    return f"{h % 12 or 12}{'a' if h < 12 else 'p'}"
+
+
+def day_range(blocks: list[Session], at: datetime | None = None) -> tuple[int, int]:
+    """Hours to show: at least 8a-6p, stretched to fit every block (blocks past midnight stop at 12a)."""
+    import math
+    lo, hi = 8, 18
+    for s in blocks:
+        start = s.start.hour + s.start.minute / 60
+        end_dt = s.end or at or datetime.now()
+        end = 24 if end_dt.date() > s.day else end_dt.hour + end_dt.minute / 60
+        lo, hi = min(lo, math.floor(start)), max(hi, math.ceil(end))
+    return lo, min(hi, 24)
+
+
+def timeline_bar(blocks: list[Session], day: date, width: int, lo: int, hi: int,
+                 at: datetime | None = None) -> Text:
+    """One row: each block filled in on an hour scale, gaps as a thin line."""
+    from datetime import datetime as dt, time as tm, timedelta
+    width = max(4, width)
+    at = at or dt.now()
+    base = dt.combine(day, tm()) + timedelta(hours=lo)
+    span = (hi - lo) * 3600
+    colors = ramp(max(2, len(blocks)))
+    cells = []
+    for c in range(width):
+        c0 = base + timedelta(seconds=span * c / width)
+        c1 = base + timedelta(seconds=span * (c + 1) / width)
+        hit = None
+        for i, s in enumerate(blocks):
+            end = s.end or at
+            if s.start < c1 and end > c0:
+                hit = (i, s)
+        cells.append(hit)
+    t = Text(no_wrap=True, overflow="crop")
+    for c, hit in enumerate(cells):
+        if hit is None:
+            t.append("─", style=T.faint)
+        else:
+            i, s = hit
+            t.append("█", style=f"bold {T.ok}" if s.running else colors[i])
+    return t
+
+
+def timeline_axis(width: int, lo: int, hi: int) -> Text:
+    """Hour labels under a timeline bar."""
+    width = max(4, width)
+    hours = hi - lo
+    step = next((s for s in (1, 2, 3, 4, 6, 12) if width / max(1, hours / s) >= 5), 12)
+    line = [" "] * (width + 4)
+    for h in range(lo, hi + 1):
+        if (h - lo) % step:
+            continue
+        pos = min(round((h - lo) / max(1, hours) * width), width)
+        label = _hour_label(h)
+        pos = max(0, min(pos - (len(label) // 2 if pos else 0), width + 4 - len(label)))
+        if all(ch == " " for ch in line[max(0, pos - 1):pos + len(label) + 1]):
+            line[pos:pos + len(label)] = label
+    return Text("".join(line).rstrip(), style=T.dim, no_wrap=True, overflow="crop")
