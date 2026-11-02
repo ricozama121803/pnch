@@ -46,6 +46,7 @@ SHORTCUTS = [
     ("  /vweek [week]", "view the week's times  /vweek last"),
     ("  /previewLogs [week]", "preview the log + invoice PDF"),
     ("  /exportLogs [week]", "save the PDF to your export folder"),
+    ("  /weeks", "calendar of weeks: ↑↓ pick · p preview · e export · a approve"),
     ("  /config", "rate, theme, export folder, file names"),
     ("", ""),
     ("tab", "switch: prompt bar → working on → today → week"),
@@ -627,6 +628,7 @@ SLASH = [
     ("/vweek", "view the week's times", "/vweek last"),
     ("/previewLogs", "preview the week's log + invoice PDF", "/previewLogs last"),
     ("/exportLogs", "save the PDF to your export folder", "/exportLogs last"),
+    ("/weeks", "pick any week on a calendar: preview, export, approve", ""),
     ("/config", "rate, theme, export folder, file names", ""),
     ("/help", "commands and shortcuts", ""),
 ]
@@ -691,6 +693,127 @@ class FocusPanel(Static, can_focus=True):
 
 
 # ── view screens ─────────────────────────────────────────────────────────────
+
+class WeekPicker(Screen):
+    """A calendar of weeks: ↑↓ to pick one, then preview / export / approve it."""
+
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "back"),
+        Binding("q", "app.pop_screen", "back", show=False),
+        Binding("p", "act('preview')", "preview"),
+        Binding("e", "act('export')", "export"),
+        Binding("a", "act('approve')", "approve"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="logbox") as v:
+            v.border_title = "pick a week"
+            yield Static(id="weekhead")
+            yield OptionList(id="weeklist")
+            yield Static(id="weekinfo")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.reload(select_last=True)
+        self.query_one("#weeklist").focus()
+
+    def on_screen_resume(self) -> None:
+        self.reload()
+
+    def _weeks(self, store: Store) -> list[date]:
+        cur = week_start(date.today())
+        first = min([s.week for s in store.sessions] + [cur - timedelta(weeks=11)])
+        n = (cur - first).days // 7
+        return [first + timedelta(weeks=i) for i in range(n + 1)]
+
+    def reload(self, select_last: bool = False) -> None:
+        store = Store.load()
+        cfg = self.app.cfg
+        self.mondays = self._weeks(store)
+        ol = self.query_one("#weeklist", OptionList)
+        keep = ol.highlighted
+        today = date.today()
+        hl = ui.ramp(5, [ui.T.faint, ui.T.accent2, ui.T.accent])
+        opts = []
+        for monday in self.mondays:
+            r = report.build(store, cfg, monday)
+            sunday = monday + timedelta(days=6)
+            month = ""                      # label the row where a month begins
+            if monday == self.mondays[0] or monday.day == 1:
+                month = f"{monday:%b}"
+            elif sunday.month != monday.month:
+                month = f"{sunday:%b}"
+            row = Text(f"{month:<5}", style=f"bold {ui.T.accent}")
+            for i in range(7):
+                d = monday + timedelta(days=i)
+                mins = sum(x.minutes() for x in store.on_day(d))
+                if d > today:
+                    style = ui.T.faint
+                elif mins:
+                    style = f"bold {hl[min(4, 1 + mins // 120)]}"
+                else:
+                    style = ui.T.dim
+                if d == today:
+                    style += " underline"
+                row.append(f"{d.day:>3}", style=style)
+            row.append(f"   {fmt_hm(r.total_minutes) if r.total_minutes else '·':>8}", style=ui.T.text)
+            if r.approved:
+                rec = store.approval(monday) or {}
+                status = ("✓ exported" if rec.get("exports") else "✓ approved") + f"  #{r.invoice_number}"
+                row.append(f"   {status}", style=ui.T.ok)
+            elif r.days:
+                row.append("   ◌ pending", style=ui.T.warn)
+            opts.append(Option(row, id=monday.isoformat()))
+        ol.clear_options()
+        ol.add_options(opts)
+        ol.highlighted = len(opts) - 1 if select_last or keep is None else min(keep, len(opts) - 1)
+        head = Text(f"{'':<5}", style=ui.T.dim)
+        for name in ("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"):
+            head.append(f"{name:>3}", style=f"bold {ui.T.muted}")
+        head.append(f"   {'hours':>8}   status", style=f"bold {ui.T.muted}")
+        self.query_one("#weekhead", Static).update(head)
+        self._info()
+
+    @on(OptionList.OptionHighlighted, "#weeklist")
+    def _info(self) -> None:
+        m = self.selected()
+        if m is None:
+            return
+        r = report.build(Store.load(), self.app.cfg, m)
+        msg = Text.assemble((f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}", f"bold {ui.T.text}"), ("   ", ""))
+        if r.days:
+            msg.append_text(ui.totals_line(r))
+        else:
+            msg.append("nothing logged", style=ui.T.dim)
+        self.query_one("#weekinfo", Static).update(msg)
+
+    def selected(self) -> date | None:
+        ol = self.query_one("#weeklist", OptionList)
+        if ol.highlighted is None:
+            return None
+        return date.fromisoformat(ol.get_option_at_index(ol.highlighted).id)
+
+    @on(OptionList.OptionSelected, "#weeklist")
+    def _open(self) -> None:
+        m = self.selected()
+        if m:
+            self.app.push_screen(LogScreen(m))
+
+    def action_act(self, what: str) -> None:
+        m = self.selected()
+        if m is None:
+            return
+        if not Store.load().in_week(m):
+            self.app.notify(f"Nothing logged for the week of {fmt_md(m)}.", severity="warning")
+            return
+        if what == "preview":
+            self.app.run_cli("preview", "-w", m.isoformat())
+        elif what == "export":
+            self.app.main.export_logs(m.isoformat())
+        elif what == "approve":
+            self.app.run_cli("approve", "-w", m.isoformat())
+        self.reload()
+
 
 class DayScreen(Screen):
     BINDINGS = [
@@ -1376,6 +1499,8 @@ class MainScreen(Screen):
                 self.app.run_cli("preview", *(["-w", arg] if arg else []))
             elif cmd == "/exportlogs":
                 self.export_logs(arg)
+            elif cmd == "/weeks":
+                self.app.push_screen(WeekPicker())
             elif cmd == "/config":
                 self.action_config()
             elif cmd == "/help":
@@ -1518,6 +1643,7 @@ class PnchCommands(Provider):
             ("View week", "/vweek · ctrl+l", main.action_log),
             ("Preview log + invoice", "/previewLogs · f5", main.action_preview),
             ("Export log + invoice PDF", "/exportLogs", lambda: main.export_logs()),
+            ("Pick a week…", "/weeks · preview, export or approve any week", lambda: app.push_screen(WeekPicker())),
             ("Undo", "ctrl+z · or type undo", app.action_undo),
             ("Redo", "ctrl+y · or type redo", app.action_redo),
             ("Config: rate and theme", "/config", main.action_config),
@@ -1634,6 +1760,10 @@ class PnchApp(App):
     }
     #logbox.unsaved { border-subtitle-color: $warning; border-subtitle-style: bold; }
     #log, #daylog { height: 1fr; background: transparent; }
+    #weekhead { height: 1; padding: 0 1; }
+    #weeklist { height: 1fr; background: transparent; border: none; }
+    #weeklist > .option-list--option-highlighted { background: $primary 35%; text-style: none; }
+    #weekinfo { height: auto; margin-top: 1; }
     #dayempty { height: auto; }
     #daytl, #weektl { height: auto; margin-top: 1; }
     #logtotal { height: auto; margin-top: 1; }

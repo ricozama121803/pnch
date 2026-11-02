@@ -27,6 +27,7 @@ Run `pnch` on its own for the full-screen app. Type commands in the **prompt bar
 | `/vweek [week]` | view the week's times (`/vweek last`) |
 | `/previewLogs [week]` | preview the week's log + invoice PDF |
 | `/exportLogs [week]` | save the PDF into your export folder (approves the week first if needed) |
+| `/weeks` | calendar of all your weeks: ↑↓ to pick one, `p` preview · `e` export · `a` approve · `enter` open |
 | `/config` | hourly rate, color theme (live preview), export folder, file-name style |
 | `/help` | everything |
 
