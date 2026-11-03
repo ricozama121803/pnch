@@ -19,6 +19,7 @@ from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen, Screen
+from textual.theme import Theme
 from textual.widgets import DataTable, Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -33,8 +34,16 @@ from .timeutil import (
 
 TEXTUAL_THEMES = {
     "catppuccin": "catppuccin-mocha", "nord": "nord", "gruvbox": "gruvbox",
-    "tokyonight": "tokyo-night", "rosepine": "rose-pine",
+    "tokyonight": "tokyo-night", "rosepine": "rose-pine", "leonida": "leonida",
 }
+
+# Textual has no built-in theme for this one, so the widgets get a matching palette here.
+LEONIDA = Theme(
+    name="leonida", dark=True,
+    primary="#c04dff", secondary="#2ee6d6", accent="#ff4fa3",
+    warning="#ffb347", error="#ff5470", success="#4ef0b3",
+    foreground="#fdeaff", background="#1a0f2e", surface="#241540", panel="#2e1b4f",
+)
 
 # every shortcut, for the F1 sheet (the footer only shows the first few)
 SHORTCUTS = [
@@ -2045,6 +2054,7 @@ class PnchApp(App):
 
     def __init__(self):
         super().__init__()
+        self.register_theme(LEONIDA)
         self.cfg = config_mod.load()
         ui.set_theme(self.cfg["ui"].get("theme", "catppuccin"))
 

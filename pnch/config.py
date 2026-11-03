@@ -38,7 +38,7 @@ filename = "logsweek{start}-{end}.pdf"  # pick a style in /config, or use: {star
                                         # {start_iso} {end_iso} (2026-10-12) {number} {name} {year}
 
 [ui]
-theme = "catppuccin"                    # catppuccin | nord | gruvbox | tokyonight | rosepine
+theme = "catppuccin"                    # catppuccin | nord | gruvbox | tokyonight | rosepine | leonida
 banner = true                           # show the ¡PNCH! banner on the dashboard
 mascot = true                           # show Bucky the boxing beaver next to the banner
 '''

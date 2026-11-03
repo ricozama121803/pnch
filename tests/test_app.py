@@ -270,3 +270,15 @@ def test_onboarding_can_be_skipped_and_only_shows_once():
         assert config.load()["you"]["name"] == "Your Name"
 
     asyncio.run(main())
+
+
+def test_every_theme_works_in_the_app():
+    from pnch import ui
+    from pnch.tui import TEXTUAL_THEMES
+
+    async def body(app, pilot):
+        for name in ui.THEMES:
+            assert name in TEXTUAL_THEMES
+            app.apply_theme(name); await pilot.pause()
+            assert app.theme == TEXTUAL_THEMES[name]
+    run(body)

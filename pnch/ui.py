@@ -42,6 +42,12 @@ THEMES = {
         accent="#c4a7e7", accent2="#9ccfd8", ok="#9ccfd8", warn="#f6c177", err="#eb6f92",
         grad=["#eb6f92", "#ebbcba", "#f6c177", "#c4a7e7", "#9ccfd8"],
     ),
+    # Leonida: a neon sunset over the bay. Orange into hot pink, violet, then Miami teal.
+    "leonida": dict(
+        base="#1a0f2e", text="#fdeaff", muted="#cdb4e0", dim="#6c4f8f", faint="#2b1a48",
+        accent="#ff4fa3", accent2="#2ee6d6", ok="#4ef0b3", warn="#ffb347", err="#ff5470",
+        grad=["#ff9a3c", "#ff5f8f", "#ff4fa3", "#c04dff", "#7b6cff", "#3fc8f2", "#2ee6d6"],
+    ),
 }
 
 T = SimpleNamespace(**THEMES["catppuccin"])
