@@ -1088,6 +1088,196 @@ class ConfigScreen(ModalScreen[bool]):
         self.app.run_cli("config", "--edit", wait=False)
 
 
+class ObPage(Static, can_focus=True):
+    """A setup page with nothing to type: enter moves on."""
+
+    BINDINGS = [Binding("enter", "screen.next", show=False)]
+
+
+class OnboardingScreen(ModalScreen[bool]):
+    """First-run setup: who you are, who you bill, your rate and theme, then a quick tour.
+    Every step is saved as you go; esc skips the rest (it's all in /config later)."""
+
+    AUTO_FOCUS = None
+    BINDINGS = [
+        Binding("escape", "skip", "skip setup"),
+        Binding("ctrl+s", "next", "next", show=False),
+    ]
+    # step id, title, the inputs on it: (config section, key, label, placeholder)
+    STEPS = [
+        ("welcome", "welcome", []),
+        ("you", "about you · goes on your log and invoice", [
+            ("you", "name", "your name", "Alex Rivera"),
+            ("you", "title", "your title  (log header reads Name-Title)", "Contractor"),
+            ("you", "email", "your email", "you@example.com"),
+            ("you", "paypal", "paypal handle  (optional, leave blank to hide it)", "@yourhandle"),
+        ]),
+        ("client", "who you bill", [
+            ("client", "name", "client name", "Client Co"),
+            ("client", "email", "client billing email", "billing@example.com"),
+            ("invoice", "role", "what you do for them  (first line of the invoice)", "Software Contractor"),
+        ]),
+        ("rate", "rate and look", [
+            ("invoice", "rate", "hourly rate ($)", "25"),
+        ]),
+        ("tour", "you're set", []),
+    ]
+
+    def __init__(self, cfg: dict):
+        super().__init__()
+        self.cfg = cfg
+        self.step = 0
+        self.theme0 = cfg["ui"].get("theme", "catppuccin")
+
+    def _field_id(self, sec: str, key: str) -> str:
+        return f"ob-{sec}-{key}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog", classes="onboard") as v:
+            v.border_title = "set up pnch"
+            with Vertical(id="ob-welcome", classes="ob-step"):
+                yield Static(ui.banner(), id="ob-banner")
+                yield ObPage(Text.assemble(
+                    ("Welcome! ", f"bold {ui.T.accent}"),
+                    ("pnch is a time clock for your terminal. Punch in, jot down what you're working on, "
+                     "punch out, and every week turns into a work log + invoice PDF.\n\n", ui.T.text),
+                    ("Let's fill in what goes on that invoice. It takes about a minute, "
+                     "and you can change all of it later with ", ui.T.muted), ("/config", f"bold {ui.T.text}"),
+                    (".", ui.T.muted)))
+            for sid, _title, fields in self.STEPS[1:-1]:
+                with Vertical(id=f"ob-{sid}", classes="ob-step"):
+                    for sec, key, label, ph in fields:
+                        cur = self.cfg[sec].get(key, "")
+                        default = config_mod.defaults()[sec].get(key)
+                        value = "" if cur == default or cur is None else str(cur)
+                        if key == "rate":
+                            value = f"{float(cur):g}"
+                        yield Label(label, classes="field")
+                        yield Input(value, id=self._field_id(sec, key), placeholder=ph, classes="ob-input")
+                    if sid == "rate":
+                        yield Label("color theme  (↑↓ previews)", classes="field")
+                        yield OptionList(*[
+                            Option(Text.assemble((f"{name:<12}", f"bold {ui.THEMES[name]['text']}"),
+                                                 *[("██", c) for c in ui.ramp(6, ui.THEMES[name]["grad"])]), id=name)
+                            for name in ui.THEMES
+                        ], id="themes")
+            with Vertical(id="ob-tour", classes="ob-step"):
+                yield ObPage()
+            yield Static(id="error")
+            yield Static(id="ob-steps")
+            yield Static(id="hint")
+
+    def _tour(self) -> Table:
+        t = Table.grid(padding=(0, 3))
+        t.add_column(style=f"bold {ui.T.accent}", no_wrap=True)
+        t.add_column(style=ui.T.text)
+        for k, v in [
+            ("in", "type it in the bar at the bottom to punch in"),
+            ("working on", "list what you're doing as you go; it becomes the log"),
+            ("out", "punch out: review the block and save it"),
+            ("tab", "switch between the bottom bar and the top section"),
+            ("arrows", "move between your items, today and the week"),
+            ("/", "views: a day, the week, preview or export the PDF"),
+            ("ctrl+p", "command palette: approve a week and everything else"),
+            ("f1", "every shortcut"),
+        ]:
+            t.add_row(k, v)
+        return Group(Text("The basics:\n", style=f"bold {ui.T.text}"), t)
+
+    def on_mount(self) -> None:
+        names = list(ui.THEMES)
+        self.query_one("#themes", OptionList).highlighted = names.index(self.theme0) if self.theme0 in names else 0
+        self._show()
+
+    def _show(self) -> None:
+        sid, title, fields = self.STEPS[self.step]
+        for i, (other, _t, _f) in enumerate(self.STEPS):
+            self.query_one(f"#ob-{other}").display = i == self.step
+        self.query_one("#dialog").border_title = f"set up pnch · {title}"
+        self.query_one("#error", Static).update("")
+        dots = Text()
+        for i in range(len(self.STEPS)):
+            dots.append("● " if i == self.step else "○ ", style=ui.T.accent if i <= self.step else ui.T.dim)
+        self.query_one("#ob-steps", Static).update(dots)
+        last = self.step == len(self.STEPS) - 1
+        self.query_one("#hint", Static).update(Text.assemble(
+            ("enter", "bold"), " start using pnch" if last else (" let's go" if self.step == 0 else " next"),
+            *([] if last else [" · ", ("esc", "bold"), " skip setup"]), style=ui.T.muted))
+        if sid == "tour":  # built now so it picks up the theme you just chose
+            self.query_one("#ob-tour ObPage", Static).update(self._tour())
+        if fields:
+            self.query_one(f"#{self._field_id(*fields[0][:2])}", Input).focus()
+        else:
+            self.query_one(f"#ob-{sid} ObPage").focus()
+
+    @on(Input.Submitted, ".ob-input")
+    def _field_done(self, ev: Input.Submitted) -> None:
+        ids = [self._field_id(sec, key) for sec, key, *_ in self.STEPS[self.step][2]]
+        i = ids.index(ev.input.id)
+        if i + 1 < len(ids):
+            self.query_one(f"#{ids[i + 1]}", Input).focus()
+        elif self.STEPS[self.step][0] == "rate":
+            if self._save_step():
+                self.query_one("#error", Static).update("")
+                self.query_one("#themes").focus()
+        else:
+            self.action_next()
+
+    @on(OptionList.OptionHighlighted, "#themes")
+    def _preview(self, ev: OptionList.OptionHighlighted) -> None:
+        self.app.apply_theme(ev.option.id)
+
+    @on(OptionList.OptionSelected, "#themes")
+    def _theme_done(self) -> None:
+        self.action_next()
+
+    def _save_step(self) -> bool:
+        sid, _title, fields = self.STEPS[self.step]
+        for sec, key, *_ in fields:
+            value = self.query_one(f"#{self._field_id(sec, key)}", Input).value.strip()
+            if key == "rate":
+                try:
+                    rate = float(value.lstrip("$") or 0)
+                    if rate <= 0:
+                        raise ValueError
+                except ValueError:
+                    self.query_one("#error", Static).update(
+                        Text("✗ the rate should be a number, like 25", style=f"bold {ui.T.err}"))
+                    return False
+                config_mod.set_value(sec, key, rate)
+            elif value or key == "paypal":
+                config_mod.set_value(sec, key, value)
+        if sid == "rate":
+            ol = self.query_one("#themes", OptionList)
+            config_mod.set_value("ui", "theme", ol.get_option_at_index(ol.highlighted or 0).id)
+        if sid == "client":
+            # The PDF's title and file name read better with the client's name in them.
+            name = self.query_one(f"#{self._field_id('client', 'name')}", Input).value.strip()
+            if name and self.cfg["invoice"]["doc_title"] == "Work Logs + Invoice":
+                config_mod.set_value("invoice", "doc_title", f"{name} Logs + Invoice")
+        return True
+
+    def action_next(self) -> None:
+        if not self._save_step():
+            return
+        if self.step == len(self.STEPS) - 1:
+            self._finish()
+            return
+        self.step += 1
+        self._show()
+
+    def action_skip(self) -> None:
+        if self.step == len(self.STEPS) - 1:
+            self._finish()
+            return
+        self.app.notify("Setup skipped. /config or ctrl+p → \"Edit full config file\" any time.")
+        self._finish()
+
+    def _finish(self) -> None:
+        config_mod.set_value("ui", "onboarded", True)
+        self.dismiss(True)
+
+
 class RecoverScreen(ModalScreen[str]):
     """Shown when pnch died while you were on the clock."""
 
@@ -1241,7 +1431,17 @@ class MainScreen(Screen):
         self.reload()
         self.set_interval(1, self._tick)
         self.query_one("#cmd", Input).focus()
-        self._check_last_session()
+        if self.cfg["ui"].get("onboarded") is False:
+            self.call_after_refresh(self._onboard)
+        else:
+            self._check_last_session()
+
+    def _onboard(self) -> None:
+        def done(_ok: bool | None) -> None:
+            self.app.reload_config()
+            self.query_one("#cmd", Input).focus()
+            self.app.notify("Type [b]in[/b] below to punch in.", title="all set")
+        self.app.push_screen(OnboardingScreen(self.cfg), done)
 
     def on_resize(self) -> None:
         self.query_one("#top").display = self.cfg["ui"].get("banner", True) and self.size.height >= 36
@@ -1787,7 +1987,7 @@ class PnchApp(App):
     #cmd { border: none; height: 1; padding: 0; background: transparent; }
     #status { height: 1; padding: 0 3; }
 
-    BlockEditor, Confirm, KeysSheet, ConfigScreen, RecoverScreen, QuitScreen, ConflictScreen {
+    BlockEditor, Confirm, KeysSheet, ConfigScreen, RecoverScreen, QuitScreen, ConflictScreen, OnboardingScreen {
         align: center middle; background: $background 60%;
     }
     #dialog {
@@ -1813,6 +2013,13 @@ class PnchApp(App):
     #folder { border: tall $foreground 20%; background: transparent; }
     #folder:focus { border: tall $accent; }
     #error { height: auto; margin-top: 1; }
+    #dialog.onboard { width: 80; overflow-y: auto; }
+    .ob-step { height: auto; }
+    ObPage { height: auto; }
+    #ob-banner { margin-bottom: 1; }
+    .ob-input { border: tall $foreground 20%; background: transparent; }
+    .ob-input:focus { border: tall $accent; }
+    #ob-steps { margin-top: 1; }
     #hint { color: $text-muted; margin-top: 1; }
     #keys { width: 96; }
     #confirm { width: 72; }

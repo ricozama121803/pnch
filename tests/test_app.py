@@ -10,6 +10,8 @@ from pnch.tui import BlockEditor, ConflictScreen, DayScreen, PnchApp, QuitScreen
 def run(script, size=(120, 40)):
     """Run an async test body against a fresh app."""
     async def main():
+        from pnch import config
+        config.set_value("ui", "onboarded", True)   # skip first-run setup (tested on its own)
         app = PnchApp()
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
@@ -218,3 +220,53 @@ def test_tab_toggles_areas_and_arrows_move_in_top():
         await pilot.press("right"); await pilot.pause()
         assert app.focused.id == "today"                    # at the end of the text it moves over
     run(body)
+
+
+def test_first_run_onboarding_saves_as_you_go():
+    from pnch import config
+    from pnch.tui import OnboardingScreen
+
+    async def main():
+        app = PnchApp()                                     # fresh home: no config yet
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(); await pilot.pause()
+            assert isinstance(app.screen, OnboardingScreen)
+            await pilot.press("enter"); await pilot.pause()                 # welcome
+            await type_(pilot, "Sam Lee")                                   # name
+            await type_(pilot, "Designer")                                  # title
+            await type_(pilot, "sam@example.com")                           # email
+            await pilot.press("enter"); await pilot.pause()                 # paypal left blank
+            await type_(pilot, "Globex")                                    # client
+            await pilot.press("enter", "enter"); await pilot.pause()        # email, role: keep
+            await pilot.press(*"abc", "enter"); await pilot.pause()         # bad rate
+            assert isinstance(app.screen, OnboardingScreen)
+            assert app.screen.STEPS[app.screen.step][0] == "rate"
+            app.screen.query_one("#ob-invoice-rate").value = ""
+            await type_(pilot, "40")
+            await pilot.press("down", "enter"); await pilot.pause()         # theme
+            await pilot.press("enter"); await pilot.pause()                 # tour
+            assert not isinstance(app.screen, OnboardingScreen)
+            assert app.focused.id == "cmd"
+        cfg = config.load()
+        assert cfg["you"]["name"] == "Sam Lee" and cfg["you"]["paypal"] == ""
+        assert cfg["client"]["name"] == "Globex" and cfg["client"]["email"] == "billing@example.com"
+        assert cfg["invoice"]["rate"] == 40 and cfg["invoice"]["doc_title"] == "Globex Logs + Invoice"
+        assert cfg["ui"]["theme"] == "nord" and cfg["ui"]["onboarded"] is True
+
+    asyncio.run(main())
+
+
+def test_onboarding_can_be_skipped_and_only_shows_once():
+    from pnch import config
+    from pnch.tui import OnboardingScreen
+
+    async def main():
+        for expect in (True, False):
+            app = PnchApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(); await pilot.pause()
+                assert isinstance(app.screen, OnboardingScreen) is expect
+                await pilot.press("escape"); await pilot.pause()
+        assert config.load()["you"]["name"] == "Your Name"
+
+    asyncio.run(main())

@@ -54,10 +54,15 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+def defaults() -> dict:
+    return tomllib.loads(DEFAULT_TOML)
+
+
 def load() -> dict:
     path = config_file()
     if not path.exists():
-        path.write_text(DEFAULT_TOML)
+        # Brand-new install: the app walks you through setup once (see OnboardingScreen).
+        path.write_text(DEFAULT_TOML.replace("[ui]\n", "[ui]\nonboarded = false                       # set by the first-run setup\n", 1))
     defaults = tomllib.loads(DEFAULT_TOML)
     with path.open("rb") as f:
         user = tomllib.load(f)
