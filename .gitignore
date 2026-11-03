@@ -4,3 +4,6 @@ __pycache__/
 
 # personal example invoice (kept locally only)
 EXAMPLE*.pdf
+
+# private notes and ideas (kept locally only)
+notes/

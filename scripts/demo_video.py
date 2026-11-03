@@ -3,11 +3,13 @@
     .venv/bin/pip install -e '.[dev]'
     pip install playwright            # any Python works for the render step; it uses your Chrome
     .venv/bin/python scripts/demo_video.py record /tmp/pnch-demo
-    python scripts/demo_video.py render /tmp/pnch-demo         # -> docs/demo.mp4 + docs/demo.gif
+    python scripts/demo_video.py render /tmp/pnch-demo [music.mp3]   # -> docs/demo.mp4 + docs/demo.gif
 
 `record` drives pnch with scripted key presses in a throwaway PNCH_HOME (your own log and
 config are never touched) and saves an SVG per frame plus how long each one stays on screen.
-`render` turns those into PNGs with headless Chrome and stitches them with ffmpeg.
+It covers the full-screen app and then the `pnch <command>` shell commands.
+`render` turns those into PNGs with headless Chrome and stitches them with ffmpeg. Give it an
+audio file and that becomes the soundtrack of the mp4 (fading out at the end); the gif stays silent.
 """
 from __future__ import annotations
 
@@ -173,6 +175,137 @@ async def a_few_days_in(tape: Tape, clock) -> None:
         await tape.wait(3.5)
 
 
+# ── the shell commands ───────────────────────────────────────────────────────
+
+class Shell:
+    """A fake terminal: runs `pnch <command>` in-process and snaps what a real terminal would show.
+
+    Prompts read from a queue of answers that get "typed" on screen. Lines that pnch shows already
+    filled in (pnch edit) take "+text" to type onto the end, or "" to keep them as they are."""
+
+    COLS, ROWS = SIZE
+
+    def __init__(self, tape: Tape):
+        import builtins
+        import io
+
+        import rich
+        from rich.console import Console
+
+        from pnch import cli, ui
+
+        self.tape, self.ui = tape, ui
+        self.con = Console(record=True, width=self.COLS, file=io.StringIO(), force_terminal=True,
+                           color_system="truecolor", highlight=False)
+        ui.console = self.con
+        rich._console = self.con            # rich prompts (Confirm, IntPrompt) print here too
+        cli._tty = lambda: True
+        self.answers: list[str] = []
+        self.prefill: str | None = None
+        builtins.input = self._input
+        try:
+            import readline                  # catch what pnch edit pre-types into a line
+            readline.set_startup_hook = lambda hook=None: setattr(self, "hook", hook)
+            readline.insert_text = lambda text: setattr(self, "prefill", text)
+        except ImportError:
+            pass
+        self.hook = None
+
+    def snap(self, secs: float) -> None:
+        from rich.console import Console
+        from rich.terminal_theme import SVG_EXPORT_THEME
+        from rich.color import Color
+        from rich.text import Text
+        import copy
+        import io
+
+        lines = self.con.export_text(clear=False, styles=True).split("\n")[-self.ROWS:]
+        lines += [""] * (self.ROWS - len(lines))
+        out = Console(record=True, width=self.COLS, file=io.StringIO(), force_terminal=True,
+                      color_system="truecolor")
+        for line in lines:
+            out.print(Text.from_ansi(line, no_wrap=True, overflow="crop"))
+        theme = copy.deepcopy(SVG_EXPORT_THEME)
+        theme.background_color = Color.parse(self.ui.T.base).triplet
+        theme.foreground_color = Color.parse(self.ui.T.text).triplet
+        svg = out.export_svg(title="pnch · shell", theme=theme)
+        name = hashlib.sha1(svg.encode()).hexdigest()[:16] + ".svg"
+        (self.tape.out / name).write_text(svg)
+        frames = self.tape.frames
+        if frames and frames[-1].get("svg") == name:
+            frames[-1]["secs"] += secs
+        else:
+            frames.append({"svg": name, "secs": secs})
+
+    def typed(self, text: str, style: str | None = None) -> None:
+        for ch in text:
+            self.con.print(ch, end="", style=style or self.ui.T.text)
+            self.snap(TYPE)
+
+    def _input(self, prompt: str = "") -> str:
+        if self.hook:                        # a line pnch shows already filled in
+            self.hook()
+            self.hook = None
+        start, self.prefill = self.prefill or "", None
+        if start:
+            self.con.print(start, end="")
+        self.snap(0.7)
+        if not self.answers:
+            raise RuntimeError("ran out of answers at:\n" + self.con.export_text(clear=False)[-1500:])
+        answer = self.answers.pop(0)
+        if start:
+            answer = start + answer[1:] if answer.startswith("+") else start
+            self.typed(answer[len(start):])
+        else:
+            self.typed(answer)
+        self.snap(0.35)
+        self.con.print()
+        return answer
+
+    def run(self, cmd: str, *answers: str, hold: float = 2.5, clear: bool = True) -> None:
+        import shlex
+
+        from pnch.cli import app
+
+        if clear:
+            self.con.export_text(clear=True)   # a fresh screen per command reads better on video
+        self.con.print(f"~/work ", end="", style=self.ui.T.dim)
+        self.con.print("❯ ", end="", style=f"bold {self.ui.T.accent}")
+        self.snap(0.5)
+        self.typed(cmd)
+        self.snap(0.4)
+        self.con.print()
+        self.answers = list(answers)
+        try:
+            app(shlex.split(cmd)[1:], standalone_mode=False)
+        except SystemExit:
+            pass
+        assert not self.answers, f"unused answers for {cmd!r}: {self.answers}"
+        self.snap(hold)
+
+
+def shell_commands(tape: Tape, clock) -> None:
+    sh = Shell(tape)
+    sh.run("pnch status", hold=3.5)
+    sh.run('pnch in "Reviewing PR feedback"', hold=2)
+    sh.run('pnch add "Answered the review comments"', hold=1.5)
+    sh.run("pnch v-block", hold=3)
+
+    tape.card("forty minutes later", secs=1.4)
+    clock.move_to(NOW + timedelta(hours=2, minutes=50))
+    sh.run('pnch out "Merged the PR"', hold=2.5)
+
+    # off the clock: pnch add asks which block from today or this week
+    sh.run("pnch add", "y", "1", "1", "Synced with design on the chart colors", "", hold=2.5)
+    sh.run("pnch v-today", hold=4)
+
+    # edit what you did, in place
+    sh.run("pnch edit", "1", "1", "2", "", "+ and its empty states", "", "", "n", hold=3)
+    sh.run("pnch v-week", hold=4.5)
+    sh.run("pnch cycle-theme", hold=1.2)
+    sh.run("pnch v-today", hold=3)
+
+
 def show_pdf(tape: Tape, args: tuple) -> None:
     """Stand-in for `pnch preview`: build the same PDF and put its pages on screen."""
     if not args or args[0] != "preview":
@@ -216,7 +349,9 @@ def record(out: Path) -> None:
         write_heartbeat(clean=True)                            # as if you'd quit with ctrl+q
         tape.card("a few days in", "punch in, log what you do, punch out")
         asyncio.run(a_few_days_in(tape, clock))
-        tape.card("pnch", "every week becomes a work log + invoice PDF", secs=2.5)
+        tape.card("from the shell", "every action is also a pnch command", secs=2.2)
+        shell_commands(tape, clock)
+        tape.card("pnch", "every week becomes a work log + invoice PDF", secs=3.5)
     tape.save()
     print(f"{len(tape.frames)} frames, {sum(f['secs'] for f in tape.frames):.0f}s → {out}")
 
@@ -239,7 +374,7 @@ p{{margin:16px 0 0;font-size:40px;color:#e8d4f5;text-align:center}}
 </style>{body}"""
 
 
-def render(src: Path) -> None:
+def render(src: Path, music: Path | None = None) -> None:
     from playwright.sync_api import sync_playwright
 
     frames = json.loads((src / "frames.json").read_text())
@@ -283,8 +418,19 @@ def render(src: Path) -> None:
     encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     # Fedora's stock ffmpeg ships OpenH264 instead of x264.
     codec = (["-c:v", "libx264", "-crf", "20", "-preset", "slow"] if " libx264 " in encoders
-             else ["-c:v", "libopenh264", "-b:v", "3M"])
-    subprocess.run([*ff, "-vf", "fps=30,format=yuv420p", *codec, "-movflags", "+faststart", str(mp4)], check=True)
+             else ["-c:v", "libopenh264", "-b:v", "8M", "-maxrate", "12M", "-g", "30"])
+    # (a low bitrate leaves faint ghosts of the previous screen in dark, flat areas)
+    if music:
+        # the track starts with the video and fades out over the last 3 seconds
+        length = sum(f["secs"] for f in frames)
+        aac = "libfdk_aac" if " libfdk_aac " in encoders else "aac"
+        subprocess.run([*ff, "-i", str(music), "-map", "0:v:0", "-map", "1:a:0",
+                        "-vf", "fps=30,format=yuv420p", *codec,
+                        "-af", f"asetpts=PTS-STARTPTS,afade=t=out:st={length - 3:.2f}:d=3",
+                        "-c:a", aac, "-b:a", "192k", "-t", f"{length:.2f}", "-movflags", "+faststart", str(mp4)],
+                       check=True)
+    else:
+        subprocess.run([*ff, "-vf", "fps=30,format=yuv420p", *codec, "-movflags", "+faststart", str(mp4)], check=True)
     subprocess.run([*ff, "-vf", "fps=10,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];"
                     "[b][p]paletteuse=dither=bayer:bayer_scale=4", str(gif)], check=True)
     for p in (mp4, gif):
@@ -292,6 +438,9 @@ def render(src: Path) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] not in ("record", "render"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("record", "render") or (sys.argv[1] == "record" and len(sys.argv) != 3):
         sys.exit(__doc__)
-    (record if sys.argv[1] == "record" else render)(Path(sys.argv[2]))
+    if sys.argv[1] == "record":
+        record(Path(sys.argv[2]))
+    else:
+        render(Path(sys.argv[2]), Path(sys.argv[3]) if len(sys.argv) > 3 else None)

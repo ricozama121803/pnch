@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="pnch demo: first-run setup, punching in, moving around, fixing an overlap, exporting the PDF" width="900">
+  <img src="docs/demo.gif" alt="pnch demo: first-run setup, punching in, moving around, fixing an overlap, exporting the PDF, then the pnch commands from the shell" width="900">
   <br>
   <sub><a href="docs/demo.mp4">Watch the full-quality video</a> · made with fake data</sub>
 </p>
@@ -40,6 +40,7 @@
 - **Fix mistakes easily.** Add a block you forgot, edit times, undo and redo anything.
 - **Overlaps handled for you.** If two blocks overlap, merge them, fit one into the gap, shorten or replace the other.
 - **Keyboard-only.** `tab` between the prompt bar and the dashboard, arrow keys to move around, `/` for everything else.
+- **Everything from the shell too.** `pnch add "…"`, `pnch v-today`, `pnch v-week`, `pnch edit` and more, no app needed.
 - **Never loses your work.** Every `enter` saves. If pnch closes unexpectedly, it picks up where you left off.
 - **Six color themes,** including **Leonida**, a neon sunset. Plus Bucky, a boxing beaver who naps while you're off the clock.
 
@@ -253,12 +254,13 @@ key presses.
 <details>
 <summary>Re-recording the demo video</summary>
 
-The demo is recorded from the real app with scripted key presses and fake data, then rendered
-with headless Chrome (via Playwright) and ffmpeg:
+The demo is recorded from the real app and the `pnch` shell commands with scripted input and
+fake data, then rendered with headless Chrome (via Playwright) and ffmpeg. Pass an audio file to
+use it as the soundtrack (it fades out at the end):
 
 ```sh
 .venv/bin/python scripts/demo_video.py record /tmp/pnch-demo
-python scripts/demo_video.py render /tmp/pnch-demo   # any Python with playwright installed
+python scripts/demo_video.py render /tmp/pnch-demo music.mp3   # any Python with playwright installed
 ```
 
 </details>
