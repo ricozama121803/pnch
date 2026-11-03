@@ -1,7 +1,6 @@
 """pnch: the command line."""
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -19,7 +18,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from . import config as config_mod
-from . import pdf, report, termimg, ui
+from . import conflict, pdf, report, termimg, ui
 from .paths import cache_dir, config_file, data_file
 from .store import Session, Store
 from .timeutil import (
@@ -63,7 +62,7 @@ def _ensure_unlocked(store: Store, monday: date) -> None:
 def _check_overlap(store: Store, start: datetime, end: datetime | None, exclude: int | None = None) -> None:
     o = store.overlap(start, end, exclude)
     if o:
-        _fail(f"That overlaps session #{o.id} ({fmt_md(o.day)} {fmt_range(o.start, o.end)}).")
+        _fail(f"That overlaps the block on {ui.block_label(o)}.")
 
 
 def _pick_week(store: Store, week: str | None) -> date:
@@ -76,8 +75,12 @@ def _pick_week(store: Store, week: str | None) -> date:
     return cur
 
 
+def _tty() -> bool:
+    return sys.stdin.isatty()
+
+
 def _ask_notes(prompt: str = "What did you work on?") -> list[str]:
-    if not sys.stdin.isatty():
+    if not _tty():
         return []
     ui.console.print(Text(f"  {prompt}", style=f"bold {ui.T.accent}"),
                      Text("(one per line, empty line to finish)", style=ui.T.dim))
@@ -91,6 +94,62 @@ def _ask_notes(prompt: str = "What did you work on?") -> list[str]:
             break
         notes.append(line)
     return notes
+
+
+def _prefilled(label: str, value: str) -> str:
+    """Ask for a value with the current one already typed in, ready to edit."""
+    try:
+        import readline
+    except ImportError:  # no readline (Windows): fall back to a plain prompt
+        readline = None
+    if readline:
+        readline.set_startup_hook(lambda: readline.insert_text(value))
+    try:
+        return ui.console.input(Text.assemble((f"  {label:>8} ", ui.T.muted), ("› ", ui.T.accent))).strip()
+    except EOFError:
+        return value
+    finally:
+        if readline:
+            readline.set_startup_hook()
+
+
+def _choose(prompt: str, labels: list[str]) -> int:
+    """Numbered menu; returns the 0-based index picked."""
+    for n, label in enumerate(labels, 1):
+        ui.console.print(Text.assemble((f"  {n}  ", f"bold {ui.T.accent}"), (label, ui.T.text)))
+    pick = IntPrompt.ask(Text(f"  {prompt}", style=f"bold {ui.T.text}"),
+                         choices=[str(n) for n in range(1, len(labels) + 1)], show_choices=False)
+    return pick - 1
+
+
+def _block_line(s: Session) -> str:
+    what = f"   › {s.notes[0]}" + (f" (+{len(s.notes) - 1})" if len(s.notes) > 1 else "") if s.notes else ""
+    return f"{ui.block_label(s)}  {fmt_hm(s.minutes())}{what}"
+
+
+def _pick_block(store: Store, ask_first: bool) -> Session:
+    """Let the user choose a block from today or another day this week."""
+    today = date.today()
+    blocks = store.in_week(week_start(today))
+    todays = [s for s in blocks if s.day == today]
+    others = [s for s in blocks if s.day != today]
+    off = "You're off the clock. " if ask_first else ""
+    if not blocks:
+        _fail(f"{off}Nothing logged this week. [b]pnch in[/] to start a block.")
+    if not _tty():
+        _fail(f"{off}Run this in a terminal to pick a block.")
+    if ask_first:
+        ui.info("You're off the clock.")
+        if not Confirm.ask(Text("  Add it to an earlier block from today or this week?", style=f"bold {ui.T.text}"),
+                           default=True):
+            ui.info("Nothing added.")
+            raise typer.Exit()
+    if todays and others:
+        pool = [todays, others][_choose("Which?", ["From today", "From another day this week"])]
+    else:
+        pool = todays or others
+        ui.info("Blocks from today:" if todays else "Nothing from today yet. Blocks from earlier this week:")
+    return pool[_choose("Which block?", [_block_line(s) for s in pool])]
 
 
 def _export_path(cfg: dict, r: report.Report) -> Path:
@@ -108,7 +167,7 @@ def clock_in(
     store, _ = _load()
     run = store.running()
     if run:
-        _fail(f"Already on the clock since {fmt_time(run.start)} (#{run.id}). [b]pnch out[/] first.")
+        _fail(f"Already on the clock since {fmt_time(run.start)}. [b]pnch out[/] first.")
     start = parse_when(at) if at else now()
     if start > now() + timedelta(minutes=1):
         _fail("Can't clock in in the future.")
@@ -155,109 +214,136 @@ def clock_out(
 
 
 @app.command()
-def note(
-    text: list[str] = typer.Argument(..., help="The note."),
-    id: Optional[int] = typer.Option(None, "--id", help="Session to add to (default: current or last)."),
-):
-    """Add a line of description to the current (or last) session."""
-    store, _ = _load()
-    s = store.get(id) if id else (store.running() or store.last())
-    if not s:
-        _fail("No session to attach a note to.")
-    _ensure_unlocked(store, s.week)
-    s.notes.append(" ".join(text))
-    store.save()
-    ui.ok(f"Note added to #{s.id} ({fmt_md(s.day)} {fmt_range(s.start, s.end)})")
-
-
-@app.command()
 def add(
-    day: str = typer.Argument(..., help="Date: today, yesterday, tue, 10/14, 2026-10-14"),
-    start: str = typer.Argument(..., help="Start time: 11pm, 9:30am, 21:30"),
-    end: str = typer.Argument(..., help="End time (past midnight is fine: 12:12am)"),
-    note: Optional[list[str]] = typer.Argument(None, help="What you did."),
+    text: Optional[list[str]] = typer.Argument(None, help="The description. Leave it out to type several lines."),
+    id: Optional[int] = typer.Option(None, "--id", hidden=True),
 ):
-    """Add a session after the fact. [dim]e.g. pnch add 10/14 11pm 12:12am getting leads together[/]"""
+    """Describe what you're doing in the current block. [dim]e.g. pnch add "checked the VPN prefix list"[/]
+
+    Off the clock, it asks which block from today or this week to add to."""
     store, _ = _load()
-    d = parse_date(day)
-    s_dt = datetime.combine(d, parse_time(start))
-    e_dt = datetime.combine(d, parse_time(end))
-    if e_dt <= s_dt:
-        e_dt += timedelta(days=1)
-    if e_dt > now() + timedelta(minutes=1):
-        _fail(f"That block ends in the future ({fmt_range(s_dt, e_dt)}). Check the day or am/pm.")
-    _ensure_unlocked(store, week_start(d))
-    _check_overlap(store, s_dt, e_dt)
-    notes = [" ".join(note)] if note else _ask_notes()
-    s = store.add(s_dt, e_dt, notes)
+    if id:
+        s = store.get(id)
+        if not s:
+            _fail(f"No session #{id}.")
+    else:
+        s = store.running() or _pick_block(store, ask_first=True)
+    _ensure_unlocked(store, s.week)
+    if text:
+        lines = [" ".join(text)]
+    else:
+        if not _tty():
+            _fail("Give a description: [b]pnch add \"…\"[/]")
+        ui.console.print(ui.session_card(s, "add to block", border=ui.T.accent2, notes_label="what I did"))
+        lines = _ask_notes("What else do you want to add to this block?")
+        if not lines:
+            ui.info("Nothing added.")
+            raise typer.Exit()
+    s.notes += lines
     store.save()
-    ui.console.print(ui.session_card(s, "added", border=ui.T.ok))
+    what = "Description" if len(lines) == 1 else f"{len(lines)} descriptions"
+    ui.ok(f"{what} added to {ui.block_label(s)}")
 
 
 @app.command()
 def edit(
-    id: int = typer.Argument(..., help="Session # (see pnch log)."),
+    id: Optional[int] = typer.Argument(None, hidden=True),
     day: Optional[str] = typer.Option(None, "--date", "-d", help="Move to another date."),
     start: Optional[str] = typer.Option(None, "--start", "-s", help="New start time."),
     end: Optional[str] = typer.Option(None, "--end", "-e", help="New end time."),
     notes: Optional[list[str]] = typer.Option(None, "--note", "-n", help="Replace notes (repeat for several lines)."),
     add_note: Optional[list[str]] = typer.Option(None, "--add-note", "-a", help="Append a note line."),
 ):
-    """Fix a session's date, times or notes. With no options, asks you interactively."""
+    """Edit a block: its date, times and what you did. Asks which block from today or this week."""
     store, _ = _load()
-    s = store.get(id)
-    if not s:
-        _fail(f"No session #{id}.")
+    if id is None:
+        s = _pick_block(store, ask_first=False)
+    else:
+        s = store.get(id)
+        if not s:
+            _fail(f"No session #{id}.")
     _ensure_unlocked(store, s.week)
 
-    interactive = not any([day, start, end, notes, add_note]) and sys.stdin.isatty()
+    interactive = not any([day, start, end, notes, add_note]) and _tty()
+
+    def ask_times(d0: str, st0: str, en0: str | None) -> tuple[str | None, str | None, str | None]:
+        ui.info("Edit in place and press enter.")
+        # a block from today stays on today; only older blocks can move to another date
+        d = None if s.day == date.today() else (_prefilled("date", d0) or None)
+        st = _prefilled("start", st0) or None
+        en = (_prefilled("end", en0) or None) if en0 is not None else None
+        return d, st, en
+
     if interactive:
-        ui.console.print(ui.session_card(s, f"editing #{s.id}"))
-        ui.info("Press enter to keep a value. Separate note lines with ' | '.")
-        day = Prompt.ask("  date", default=s.day.isoformat())
-        start = Prompt.ask("  start", default=fmt_time(s.start))
-        if not s.running:
-            end = Prompt.ask("  end", default=fmt_time(s.end))
-        joined = Prompt.ask("  notes", default=" | ".join(s.notes))
-        notes = [n.strip() for n in joined.split("|") if n.strip()]
+        ui.console.print(ui.session_card(s, "editing", notes_label="what I did"))
+        parts = ["time", "what I did"]
+        first = parts[_choose("What do you want to edit?", ["Time", "What I did"])]
+        todo = [first]
+        while todo:
+            part = todo.pop()
+            if part == "time":
+                day, start, end = ask_times(s.day.isoformat(), fmt_time(s.start),
+                                            None if s.running else fmt_time(s.end))
+            else:
+                ui.info("Edit in place and press enter. Clear a line to remove it.")
+                if s.notes:
+                    ui.console.print(Text("  what I did", style=f"bold {ui.T.accent}"))
+                notes = [n for n in (_prefilled("", old) for old in s.notes) if n]
+                notes += _ask_notes("What else do you want to add to this block?")
+            if part == first:
+                other = parts[1 - parts.index(first)]
+                if Confirm.ask(Text(f"  Edit {'the time' if other == 'time' else 'what you did'} too?",
+                                    style=f"bold {ui.T.text}"), default=False):
+                    todo.append(other)
 
-    d = parse_date(day) if day else s.day
-    new_start = datetime.combine(d, parse_time(start) if start else s.start.time())
-    new_end = s.end
-    if s.end is not None:
-        new_end = datetime.combine(d, parse_time(end) if end else s.end.time())
-        if new_end <= new_start:
-            new_end += timedelta(days=1)
-    elif end:
-        _fail("That session is still running. Use [b]pnch out --at[/] to end it.")
-    _ensure_unlocked(store, week_start(d))
+    new_notes = list(notes) if notes is not None else list(s.notes)
+    new_notes += list(add_note or [])
+
+    while True:
+        d = parse_date(day) if day else s.day
+        new_start = datetime.combine(d, parse_time(start) if start else s.start.time())
+        new_end = s.end
+        if s.end is not None:
+            new_end = datetime.combine(d, parse_time(end) if end else s.end.time())
+            if new_end <= new_start:
+                new_end += timedelta(days=1)
+        elif end:
+            _fail("That session is still running. Use [b]pnch out --at[/] to end it.")
+        _ensure_unlocked(store, week_start(d))
+        if not (interactive and new_end and store.overlap(new_start, new_end, s.id)):
+            break
+        how = _resolve_overlap(store, new_start, new_end, s.id)
+        if how == "back":
+            day, start, end = ask_times(d.isoformat(), fmt_time(new_start), fmt_time(new_end))
+            continue
+        rid = conflict.apply(store, how, new_start, new_end, new_notes, s.id)
+        ui.console.print(ui.session_card(store.get(rid), "updated", border=ui.T.ok, notes_label="what I did"))
+        return
+
     _check_overlap(store, new_start, new_end, exclude=s.id)
-    s.start, s.end = new_start, new_end
-    if notes is not None:
-        s.notes = list(notes)
-    if add_note:
-        s.notes += list(add_note)
+    s.start, s.end, s.notes = new_start, new_end, new_notes
     store.save()
-    ui.console.print(ui.session_card(s, "updated", border=ui.T.ok))
+    ui.console.print(ui.session_card(s, "updated", border=ui.T.ok, notes_label="what I did"))
 
 
-@app.command("rm")
-def remove(
-    id: int = typer.Argument(..., help="Session # to delete."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask."),
-):
-    """Delete a session."""
-    store, _ = _load()
-    s = store.get(id)
-    if not s:
-        _fail(f"No session #{id}.")
-    _ensure_unlocked(store, s.week)
-    ui.console.print(ui.session_card(s, f"delete #{s.id}?", border=ui.T.err))
-    if not yes and not Confirm.ask("  Delete it?", default=False):
+_FIXES = {"merge": "Merge them", "trim": "Fit this one into the gap", "shorten": "Shorten the other block",
+          "replace": "Replace the other block"}
+
+
+def _resolve_overlap(store: Store, st: datetime, en: datetime, sid: int) -> str:
+    """The new times run into another block: offer ways to fix it. Returns a conflict fix or 'back'."""
+    ui.warn(f"{fmt_range(st, en)} overlaps:")
+    for o in conflict.overlapping(store, st, en, sid):
+        ui.console.print(Text.assemble((f"    {ui.block_label(o)}", f"bold {ui.T.warn}"),
+                                       (f"  {' · '.join(o.notes)}" if o.notes else "", ui.T.muted)))
+    opts = conflict.options(store, st, en, sid)
+    keys = list(opts) + ["back", "cancel"]
+    labels = [f"{_FIXES[k]}  {opts[k]}" for k in opts] + ["Change the times", "Cancel (keep the block as it was)"]
+    how = keys[_choose("How do you want to fix it?", labels)]
+    if how == "cancel":
+        ui.info("Nothing changed.")
         raise typer.Exit()
-    store.remove(id)
-    store.save()
-    ui.ok(f"Deleted #{id}.")
+    return how
 
 
 # ── viewing ──────────────────────────────────────────────────────────────────
@@ -276,10 +362,8 @@ def _root(ctx: typer.Context):
 
 
 
-def _show_dashboard(banner: bool = True, week: str | None = None) -> None:
+def _show_dashboard(week: str | None = None) -> None:
     store, cfg = _load()
-    if banner and cfg["ui"].get("banner", True):
-        ui.console.print(Text(""), ui.banner(), Text(""))
     ui.console.print(ui.dashboard(store, report.build(store, cfg, parse_week(week)), cfg))
     run = store.running()
     if run and run.minutes() > 12 * 60:
@@ -292,10 +376,9 @@ def status(
     watch: bool = typer.Option(False, "--watch", "-W", help="Live-updating dashboard (ctrl-c to quit)."),
     week: Optional[str] = typer.Option(None, "--week", "-w", help=WEEK_HELP),
 ):
-    """Dashboard: current shift + this week at a glance."""
+    """On or off the clock, hours today, and the week."""
     store, cfg = _load()
     monday = parse_week(week)
-    show_banner = cfg["ui"].get("banner", True)
     if not watch:
         _show_dashboard(week=week)
         return
@@ -303,26 +386,66 @@ def status(
         with Live(console=ui.console, screen=True, auto_refresh=False) as live:
             while True:
                 store = Store.load()
-                live.update(Group(*([Text(""), ui.banner(), Text("")] if show_banner else []), ui.dashboard(store, report.build(store, cfg, monday), cfg, live=True),
+                live.update(Group(ui.dashboard(store, report.build(store, cfg, monday), cfg, live=True),
                                   Text("  ctrl-c to quit", style=ui.T.faint)), refresh=True)
                 _time.sleep(1)
     except KeyboardInterrupt:
         pass
 
 
-@app.command("log")
-def log_cmd(week: Optional[str] = typer.Option(None, "--week", "-w", help=WEEK_HELP)):
-    """List a week's sessions with their #s (for edit / rm)."""
+# ── quick views ──────────────────────────────────────────────────────────────
+
+@app.command("v-today")
+def view_today(day: Optional[str] = typer.Argument(None, help="Another day instead: yesterday, tue, 10/14.")):
+    """View today's blocks: a timeline plus what you did in each."""
+    store, cfg = _load()
+    d = parse_date(day) if day else date.today()
+    blocks = store.on_day(d)
+    title = f"{'today' if d == date.today() else DAY_ABBR[d.weekday()]} · {fmt_md(d)}"
+    if not blocks:
+        ui.console.print(ui.panel(Text("nothing logged", style=ui.T.dim), title))
+        return
+    width = min(60, max(20, ui.console.width - 12))
+    lo, hi = ui.day_range(blocks)
+    total = sum(s.minutes() for s in blocks)
+    foot = Text.assemble(("total ", ui.T.dim), (fmt_hm(total), f"bold {ui.T.text}"),
+                         ("   ", ""), (f"{len(blocks)} block{'s' if len(blocks) != 1 else ''}", ui.T.dim))
+    ui.console.print(ui.panel(Group(ui.timeline_bar(blocks, d, width, lo, hi), ui.timeline_axis(width, lo, hi),
+                                    Text(""), ui.blocks_table(blocks), Text(""), foot), title))
+
+
+@app.command("v-week")
+def view_week(week: Optional[str] = typer.Option(None, "--week", "-w", help=WEEK_HELP)):
+    """View a week: hours per day, every block and the totals."""
     store, cfg = _load()
     monday = parse_week(week)
     r = report.build(store, cfg, monday)
-    if not r.days:
-        ui.console.print(ui.panel(Text("nothing logged", style=ui.T.dim), f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}",
-                                  subtitle=ui.status_chip(store, monday)))
-        return
-    ui.console.print(ui.panel(Group(ui.sessions_table(store, monday), Text(""), ui.totals_line(r)),
-                              f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}",
+    parts = [ui.week_bars(store, monday)]
+    if r.days:
+        parts += [Text(""), ui.sessions_table(store, monday)]
+    parts += [Text(""), ui.totals_line(r)]
+    ui.console.print(ui.panel(Group(*parts), f"week {fmt_md(r.monday)} – {fmt_md(r.sunday)}",
                               subtitle=ui.status_chip(store, monday)))
+
+
+@app.command("v-block")
+def view_block(id: Optional[int] = typer.Option(None, "--id", hidden=True)):
+    """View the block you're clocked into, or your most recent one."""
+    store, _ = _load()
+    if id:
+        s = store.get(id)
+        if not s:
+            _fail(f"No session #{id}.")
+        title, border = "block", None
+    elif (s := store.running()):
+        title, border = "on the clock", ui.T.ok
+    elif (s := store.last()):
+        title, border = "last block (off the clock currently)", None
+    else:
+        _fail("Nothing logged yet. [b]pnch in[/] to start a block.")
+    ui.console.print(ui.session_card(s, title, border=border, notes_label="what I did"))
+    if not s.notes:
+        ui.console.print(Text('  no descriptions yet, add one with  pnch add "…"', style=ui.T.dim))
 
 
 @app.command()
@@ -512,6 +635,20 @@ def redo(steps: int = typer.Argument(1, help="How many changes to redo.")):
         ui.ok(f"Redid: {label}")
 
 
+@app.command("cycle-theme")
+def cycle_theme():
+    """Switch to the next color theme."""
+    _, cfg = _load()
+    names = list(ui.THEMES)
+    cur = cfg["ui"].get("theme", "catppuccin")
+    nxt = names[(names.index(cur) + 1) % len(names)] if cur in names else names[0]
+    config_mod.set_value("ui", "theme", nxt)
+    ui.set_theme(nxt)
+    swatch = Text.assemble(*[("██", c) for c in ui.ramp(6)])
+    ui.console.print(Text.assemble(("  theme ", ui.T.dim), (f"{nxt:<12}", f"bold {ui.T.accent}"), swatch,
+                                   (f"   ({names.index(nxt) + 1}/{len(names)})", ui.T.dim)))
+
+
 @app.command()
 def config(
     edit_: bool = typer.Option(False, "--edit", "-e", help="Open the config in $EDITOR."),
@@ -534,25 +671,6 @@ def config(
         return
     ui.console.print(ui.panel(Syntax(f.read_text(), "toml", theme="ansi_dark", background_color="default"),
                               "config", subtitle=Text(str(f), style=ui.T.dim), padding=(0, 1)))
-
-
-@app.command()
-def bar(json_: bool = typer.Option(False, "--json", help="Waybar-style JSON.")):
-    """One-line status for your bar / prompt (waybar, polybar, tmux…)."""
-    store = Store.load()
-    run = store.running()
-    week_min = sum(s.minutes() for s in store.in_week(week_start(date.today())))
-    if run:
-        h, m = divmod(run.minutes(), 60)
-        text, cls = f"● {h}:{m:02d}", "running"
-        tip = f"since {fmt_time(run.start)}" + (f" · {run.notes[-1]}" if run.notes else "")
-    else:
-        text, cls, tip = f"○ {fmt_hm(week_min)}", "idle", "off the clock"
-    tip += f"\nthis week: {fmt_hm(week_min)}"
-    if json_:
-        print(json.dumps({"text": text, "tooltip": tip, "class": cls, "alt": cls}))
-    else:
-        print(text)
 
 
 def run():

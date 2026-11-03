@@ -21,7 +21,7 @@ on its own in a terminal to open the full-screen app.
 Every action is also available as a
 .B pnch
 .I command
-for scripts, status bars and quick use from the shell.
+for scripts and quick use from the shell.
 When output is not a terminal, plain
 .B pnch
 prints the dashboard instead.
@@ -118,23 +118,27 @@ Clock in.
 .BR out " [\fIitem\fR...] [\fB\-\-at\fR \fItime\fR]"
 Clock out. Without an item it shows the block and asks for anything missing.
 .TP
-.BR note " \fItext\fR... [\fB\-\-id\fR \fIn\fR]"
-Add a line to the current (or last) block.
+.BR add " [\fItext\fR...]"
+Describe what you did in the current block. Without text it asks for lines.
+Off the clock, it asks whether to add to an earlier block, then lets you pick one from today or
+another day this week.
 .TP
-.BR add " \fIday start end\fR [\fIitem\fR...]"
-Log a block after the fact. An end before the start means past midnight.
+.BR edit " [\fB\-\-date\fR] [\fB\-\-start\fR] [\fB\-\-end\fR] [\fB\-\-note\fR]... [\fB\-\-add\-note\fR]..."
+Change a block. Lets you pick one from today or another day this week, then choose to edit its time or what
+you did, in place. A block from today keeps its date. If the new times overlap another block, it offers to
+merge them, fit this one into the gap, shorten the other, replace it, or change the times again.
 .TP
-.BR edit " \fIn\fR [\fB\-\-date\fR] [\fB\-\-start\fR] [\fB\-\-end\fR] [\fB\-\-note\fR]... [\fB\-\-add\-note\fR]..."
-Change a block. With no options it asks interactively.
+.B v\-block
+Show the block you are clocked into, or your most recent one.
 .TP
-.BR rm " \fIn\fR [\fB\-y\fR]"
-Delete a block.
+.BR v\-today " [\fIday\fR]"
+Show a day's timeline and its blocks. Defaults to today.
 .TP
-.BR log " [\fB\-w\fR \fIweek\fR]"
-List a week's blocks with their numbers.
+.BR v\-week " [\fB\-w\fR \fIweek\fR]"
+Show hours per day, every block and the totals for a week.
 .TP
 .BR status " [\fB\-W\fR] [\fB\-w\fR \fIweek\fR]"
-Dashboard; \fB\-W\fR keeps it live.
+On or off the clock, hours worked today, and the week; \fB\-W\fR keeps it live.
 .TP
 .BR weeks " [\fB\-n\fR \fIcount\fR]"
 Recent weeks with hours, amount, invoice number and status.
@@ -157,8 +161,8 @@ Undo or redo changes. The last 100 are kept.
 .BR config " [\fB\-e\fR] [\fB\-\-path\fR]"
 Show the config, open it in \fB$VISUAL\fR/\fB$EDITOR\fR, or print where files live.
 .TP
-.BR bar " [\fB\-\-json\fR]"
-One-line status for waybar, polybar, tmux or a shell prompt.
+.B cycle\-theme
+Switch to the next color theme.
 .SH CONFIGURATION
 \fI~/.config/pnch/config.toml\fR is created on first run. Sections:
 .TP
@@ -208,11 +212,9 @@ cannot be read (for example a time like \fB25pm\fR).
 .SH EXAMPLES
 .nf
 pnch in fixing the scraper
-pnch note "checked the VPN prefix list"
+pnch add "checked the VPN prefix list"
 pnch out --at 5:15pm
-pnch add yesterday 11pm 12:12am pulled the leads list together
 pnch approve -w last && pnch export -w last
-pnch bar --json
 .fi
 .SH SEE ALSO
 https://github.com/ricozama121803/pnch

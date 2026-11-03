@@ -20,33 +20,33 @@ THEMES = {
     "catppuccin": dict(
         base="#1e1e2e", text="#cdd6f4", muted="#a6adc8", dim="#585b70", faint="#313244",
         accent="#cba6f7", accent2="#89b4fa", ok="#a6e3a1", warn="#f9e2af", err="#f38ba8",
-        grad=["#f5c2e7", "#cba6f7", "#b4befe", "#89b4fa", "#89dceb", "#94e2d5"],
+        grad=["#b4befe", "#89b4fa"],
     ),
     "nord": dict(
         base="#2e3440", text="#eceff4", muted="#d8dee9", dim="#4c566a", faint="#3b4252",
         accent="#88c0d0", accent2="#81a1c1", ok="#a3be8c", warn="#ebcb8b", err="#bf616a",
-        grad=["#8fbcbb", "#88c0d0", "#81a1c1", "#5e81ac", "#b48ead"],
+        grad=["#88c0d0", "#81a1c1"],
     ),
     "gruvbox": dict(
         base="#282828", text="#ebdbb2", muted="#bdae93", dim="#665c54", faint="#3c3836",
         accent="#fe8019", accent2="#fabd2f", ok="#b8bb26", warn="#fabd2f", err="#fb4934",
-        grad=["#fb4934", "#fe8019", "#fabd2f", "#b8bb26", "#8ec07c"],
+        grad=["#fabd2f", "#fe8019"],
     ),
     "tokyonight": dict(
         base="#1a1b26", text="#c0caf5", muted="#a9b1d6", dim="#565f89", faint="#292e42",
         accent="#bb9af7", accent2="#7aa2f7", ok="#9ece6a", warn="#e0af68", err="#f7768e",
-        grad=["#f7768e", "#bb9af7", "#7aa2f7", "#7dcfff", "#73daca"],
+        grad=["#7aa2f7", "#7dcfff"],
     ),
     "rosepine": dict(
         base="#191724", text="#e0def4", muted="#908caa", dim="#524f67", faint="#26233a",
         accent="#c4a7e7", accent2="#9ccfd8", ok="#9ccfd8", warn="#f6c177", err="#eb6f92",
-        grad=["#eb6f92", "#ebbcba", "#f6c177", "#c4a7e7", "#9ccfd8"],
+        grad=["#ebbcba", "#c4a7e7"],
     ),
-    # Leonida: a neon sunset over the bay. Orange into hot pink, violet, then Miami teal.
+    # Leonida: a neon sunset over the bay, kept to hot pink into violet.
     "leonida": dict(
         base="#1a0f2e", text="#fdeaff", muted="#cdb4e0", dim="#6c4f8f", faint="#2b1a48",
         accent="#ff4fa3", accent2="#2ee6d6", ok="#4ef0b3", warn="#ffb347", err="#ff5470",
-        grad=["#ff9a3c", "#ff5f8f", "#ff4fa3", "#c04dff", "#7b6cff", "#3fc8f2", "#2ee6d6"],
+        grad=["#ff5f8f", "#c04dff"],
     ),
 }
 
@@ -178,7 +178,7 @@ def panel(body, title: str, subtitle=None, border: str | None = None, padding=(1
         body,
         box=box.ROUNDED,
         border_style=border or T.dim,
-        title=Text.assemble(" ", gradient(title), " "),
+        title=Text.assemble(" ", (title, f"bold {T.accent}"), " "),
         title_align="left",
         subtitle=subtitle,
         subtitle_align="right",
@@ -219,15 +219,14 @@ def week_bars(store: Store, monday: date, at: datetime | None = None, width: int
     g.add_column(justify="right", width=8)
     g.add_column()
     today = date.today()
-    colors = ramp(7)
-    for d, m, col in zip(days, mins, colors):
+    for d, m in zip(days, mins):
         is_today = d == today
         running = any(s.running for s in store.on_day(d))
         g.add_row(
             Text("›", style=f"bold {T.accent}") if is_today else Text(""),
             Text(DAY_ABBR[d.weekday()], style=f"bold {T.text}" if is_today else T.muted),
             Text(fmt_md(d), style=T.dim),
-            bar(m, scale, width=width, color=col),
+            bar(m, scale, width=width, color=_lerp(T.accent2, T.base, 0.2)),
             Text(fmt_hm(m) if m else "", style=T.text),
             Text(" ●", style=f"bold {T.ok}") if running else Text(""),
         )
@@ -248,35 +247,22 @@ def totals_line(r: Report) -> Text:
 
 
 def dashboard(store: Store, r: Report, cfg: dict, live: bool = False) -> Group:
+    """pnch status: on/off the clock, today's hours, the week."""
     now = datetime.now()
     run = store.running()
-    stamp = Text(f"{now:%a %b} {now.day} · {fmt_time(now)}", style=T.dim)
+    head = chip("● ON THE CLOCK", T.ok) if run else chip("○ OFF THE CLOCK", T.dim)
 
+    today_min = sum(s.minutes(now) for s in store.on_day(date.today()))
+    rows = kv(("time worked today", Text(fmt_hm(today_min), style=f"bold {T.text}")))
     if run:
-        head = Table.grid(expand=True)
-        head.add_column()
-        head.add_column(justify="right")
-        head.add_row(Text.assemble(chip("● ON THE CLOCK", T.ok)), stamp)
-        clock = big(clock_str(run.seconds(now), with_seconds=live))
-        meta = Text.assemble(
-            ("since ", T.dim), (fmt_time(run.start), f"bold {T.text}"),
-            ("  ·  ", T.dim), (f"#{run.id}", T.dim),
-        )
-        parts = [head, Text(""), clock, Text(""), meta]
-        if run.notes:
-            parts += [Text(""), notes_text(run.notes)]
-        else:
-            parts += [Text(""), Text("› no notes yet, add one with  pnch note \"…\"", style=T.dim)]
-        top = panel(Group(*parts), "pnch", border=T.accent)
-    else:
-        today_min = sum(s.minutes() for s in store.on_day(date.today()))
-        head = Table.grid(expand=True)
-        head.add_column()
-        head.add_column(justify="right")
-        head.add_row(chip("○ OFF THE CLOCK", T.dim), stamp)
-        clock = big(clock_str(today_min * 60, with_seconds=False), stops=[T.dim, T.muted])
-        hint = Text.assemble(("today", T.dim), ("  ·  pnch in \"what you're starting\"", T.faint))
-        top = panel(Group(head, Text(""), clock, Text(""), hint), "pnch")
+        el = run.seconds(now)
+        shift = clock_str(el, with_seconds=live) if live else fmt_hm(el // 60)
+        rows.add_row(Text("this block", style=T.muted),
+                     Text.assemble((shift, f"bold {T.ok}"), (f"  since {fmt_time(run.start)}", T.dim)))
+    parts = [head, Text(""), rows]
+    if run and run.notes:
+        parts += [Text(""), Text("what I did", style=f"bold {T.accent}"), notes_text(run.notes)]
+    top = panel(Group(*parts), f"today · {now:%a %b} {now.day}", border=T.ok if run else None, padding=(0, 2))
 
     week = panel(
         Group(week_bars(store, r.monday, now), Text(""), totals_line(r)),
@@ -287,17 +273,20 @@ def dashboard(store: Store, r: Report, cfg: dict, live: bool = False) -> Group:
 
 
 def sessions_table(store: Store, monday: date) -> Table:
+    return blocks_table(store.in_week(monday))
+
+
+def blocks_table(blocks: list[Session]) -> Table:
     t = Table(
         box=box.SIMPLE_HEAD, header_style=f"bold {T.accent}", border_style=T.dim,
         show_edge=False, pad_edge=False, expand=False,
     )
     t.add_column("day", style=T.muted, no_wrap=True)
-    t.add_column("#", style=T.dim, justify="right")
     t.add_column("time", style=T.text, no_wrap=True)
     t.add_column("dur", style=T.accent2, justify="right", no_wrap=True)
     t.add_column("what", style=T.text, max_width=70)
     last_day = None
-    for s in store.in_week(monday):
+    for s in blocks:
         if last_day and s.day != last_day:
             t.add_section()
         day = f"{DAY_ABBR[s.day.weekday()]} {fmt_md(s.day)}" if s.day != last_day else ""
@@ -305,20 +294,27 @@ def sessions_table(store: Store, monday: date) -> Table:
         rng = Text(fmt_range(s.start, s.end))
         if s.running:
             rng.stylize(f"bold {T.ok}")
-        t.add_row(day, str(s.id), rng, fmt_hm(s.minutes()), notes_text(s.notes) if s.notes else Text("—", style=T.faint))
+        t.add_row(day, rng, fmt_hm(s.minutes()), notes_text(s.notes) if s.notes else Text("—", style=T.faint))
     return t
 
 
-def session_card(s: Session, title: str, border: str | None = None) -> Panel:
+def block_label(s: Session) -> str:
+    """Mon 11/2 9:10pm-10:38pm"""
+    return f"{DAY_ABBR[s.day.weekday()]} {fmt_md(s.day)} {fmt_range(s.start, s.end)}"
+
+
+def session_card(s: Session, title: str, border: str | None = None, notes_label: str | None = None) -> Panel:
     body = kv(
-        ("#", str(s.id)),
         ("day", f"{DAY_ABBR[s.day.weekday()]} {fmt_md(s.day)}"),
         ("time", fmt_range(s.start, s.end)),
         ("duration", fmt_hm(s.minutes())),
     )
     parts = [body]
     if s.notes:
-        parts += [Text(""), notes_text(s.notes)]
+        parts.append(Text(""))
+        if notes_label:
+            parts.append(Text(notes_label, style=f"bold {T.accent}"))
+        parts.append(notes_text(s.notes))
     return panel(Group(*parts), title, border=border, padding=(0, 2))
 
 
@@ -395,7 +391,7 @@ def timeline_bar(blocks: list[Session], day: date, width: int, lo: int, hi: int,
     at = at or dt.now()
     base = dt.combine(day, tm()) + timedelta(hours=lo)
     span = (hi - lo) * 3600
-    colors = ramp(max(2, len(blocks)))
+    colors = [_lerp(T.accent2, T.base, 0.2), _lerp(T.accent2, T.base, 0.5)]
     cells = []
     for c in range(width):
         c0 = base + timedelta(seconds=span * c / width)
@@ -412,7 +408,7 @@ def timeline_bar(blocks: list[Session], day: date, width: int, lo: int, hi: int,
             t.append("─", style=T.faint)
         else:
             i, s = hit
-            t.append("█", style=f"bold {T.ok}" if s.running else colors[i])
+            t.append("█", style=f"bold {T.ok}" if s.running else colors[i % 2])
     return t
 
 

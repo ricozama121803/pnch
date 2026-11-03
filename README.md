@@ -192,19 +192,20 @@ billing rule and invoice footer live in the config file: `pnch config --edit`.
 
 ## From the shell
 
-Every action also works as `pnch <command>`, which is handy for scripts and status bars.
+Every action also works as `pnch <command>`, which is handy for scripts and quick use from the shell.
 
 <details>
 <summary>Show the commands</summary>
 
 ```sh
 pnch in fixing the scraper          # clock in (the item is optional)
-pnch note "checked VPN prefix list"
+pnch add "checked VPN prefix list"  # describe the current block
+pnch add                            # or type several lines (off the clock: pick a block)
 pnch out --at 5:15pm                # forgot to clock out
-pnch add 10/14 11pm 12:12am pulled the leads list together
-pnch log                            # this week's blocks with their #s
-pnch edit 3                         # or --start / --end / --note
-pnch rm 3
+pnch v-block                        # the block you're in, or your last one
+pnch v-today                        # today's timeline and blocks (or: pnch v-today yesterday)
+pnch v-week                         # hours per day, every block, totals (-w last)
+pnch edit                           # pick a block, then change it (or --start / --end / --note)
 pnch undo                           # pnch redo puts it back
 
 pnch preview -w last                # PDF inline (kitty/Ghostty/WezTerm) or in your viewer
@@ -213,8 +214,8 @@ pnch export -w last                 # write the PDF to your export folder
 pnch unapprove -w last              # unlock a week to edit it
 
 pnch weeks                          # hours, invoice # and status per week
-pnch status -W                      # live dashboard
-pnch bar --json                     # one-liner for waybar / polybar / tmux
+pnch cycle-theme                    # switch to the next color theme
+pnch status                         # on/off the clock, hours today, the week (-W to keep it live)
 ```
 
 **Weeks:** `this` · `last` · `-2` · `10/14`

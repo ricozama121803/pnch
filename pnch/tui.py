@@ -2013,11 +2013,11 @@ class PnchApp(App):
     #extra, #rate { border: tall $foreground 20%; background: transparent; }
     .field { color: $text-muted; margin-top: 1; }
     #quitopts { height: auto; margin-top: 1; background: transparent; border: none; }
-    #quitopts > .option-list--option-highlighted { background: $boost; text-style: none; }
+    #quitopts > .option-list--option-highlighted { background: $primary 35%; text-style: none; }
     #themes, #naming { height: auto; background: transparent; border: round $foreground 20%; }
     #themes:focus, #naming:focus { border: round $accent; }
     #themes > .option-list--option-highlighted, #naming > .option-list--option-highlighted {
-        background: $boost; text-style: none;
+        background: $primary 35%; text-style: none;
     }
     #folder { border: tall $foreground 20%; background: transparent; }
     #folder:focus { border: tall $accent; }
