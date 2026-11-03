@@ -525,7 +525,7 @@ class LogScreen(Screen):
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns("day", "#", "time", "dur", "what")
+        t.add_columns("day", "time", "dur", "what")
         self.reload()
 
     def reload(self) -> None:
@@ -547,7 +547,7 @@ class LogScreen(Screen):
             if s.running:
                 rng.stylize(f"bold {ui.T.ok}")
                 rng.append("  ● running", style=f"bold {ui.T.ok}")
-            t.add_row(day, str(s.id), rng, fmt_hm(s.minutes()),
+            t.add_row(day, rng, fmt_hm(s.minutes()),
                       Text(" · ".join(s.notes) or "—", overflow="ellipsis", no_wrap=True), key=str(s.id))
         self.query_one("#logtotal", Static).update(ui.totals_line(r))
         self._timeline(store)

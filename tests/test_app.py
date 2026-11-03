@@ -179,7 +179,7 @@ def test_quit_while_clocked_in_and_stay_keeps_the_typed_item():
 def test_running_block_can_get_descriptions_without_being_ended():
     punched_in_earlier()
     async def script(app, pilot):
-        app.push_screen(DayScreen(now().date())); await pilot.pause()
+        app.push_screen(DayScreen(Store.load().running().day)); await pilot.pause()   # the block's own day (it may have started yesterday)
         await pilot.press("enter"); await pilot.pause()
         assert app.screen.live and not app.screen.query_one("#times").display
         await type_(pilot, "added later")
