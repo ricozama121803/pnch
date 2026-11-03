@@ -185,3 +185,36 @@ def test_running_block_can_get_descriptions_without_being_ended():
         s = Store.load().running()
         assert s is not None and s.notes == ["working", "added later"]
     run(script)
+
+
+def test_tab_toggles_areas_and_arrows_move_in_top():
+    punched_in_earlier(notes=("one", "two"))
+
+    async def body(app, pilot):
+        app.main.reload(); await pilot.pause()
+        assert app.focused.id == "cmd"
+        await pilot.press("tab"); await pilot.pause()
+        assert app.focused.id == "new"                      # tab lands in the top section
+        await pilot.press("right"); await pilot.pause()
+        assert app.focused.id == "today"                    # empty box: right goes to the panels
+        await pilot.press("down"); await pilot.pause()
+        assert app.focused.id == "week"
+        await pilot.press("up", "left"); await pilot.pause()
+        assert app.focused.id == "new"
+        await pilot.press("up"); await pilot.pause()
+        assert app.focused.id == "items"
+        await pilot.press("down"); await pilot.pause()
+        assert app.focused.id == "new"                      # past the last item, back to the box
+        await pilot.press("right", "down"); await pilot.pause()
+        assert app.focused.id == "week"
+        await pilot.press("tab"); await pilot.pause()
+        assert app.focused.id == "cmd"                      # tab goes back to the prompt bar
+        await pilot.press("shift+tab"); await pilot.pause()
+        assert app.focused.id == "week"                     # ...and returns where you were
+        await pilot.press("tab", "tab"); await pilot.pause()
+        await pilot.press("left"); await pilot.pause()
+        await pilot.press(*"ab", "left", "right"); await pilot.pause()
+        assert app.focused.id == "new"                      # right inside text just moves the cursor
+        await pilot.press("right"); await pilot.pause()
+        assert app.focused.id == "today"                    # at the end of the text it moves over
+    run(body)

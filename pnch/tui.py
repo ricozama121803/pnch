@@ -49,8 +49,9 @@ SHORTCUTS = [
     ("  /weeks", "calendar of weeks: ↑↓ pick · p preview · e export · a approve"),
     ("  /config", "rate, theme, export folder, file names"),
     ("", ""),
-    ("tab", "switch: prompt bar → working on → today → week"),
-    ("↑ (in working on)", "jump into the item list: f2 rename · delete remove · esc back"),
+    ("tab", "switch between the prompt bar and the top section"),
+    ("arrows (top section)", "move between items, working on, today and week"),
+    ("  in the item list", "f2 rename · delete remove · esc back"),
     ("enter (on a panel)", "open today / the week"),
     ("ctrl+s", "punch in / punch out"),
     ("ctrl+z · ctrl+y", "undo · redo"),
@@ -95,7 +96,21 @@ class ItemList(OptionList):
         Binding("delete,backspace", "remove", "remove item", show=False),
         Binding("f2", "rename", "rename item", show=False),
         Binding("escape", "back", "back", show=False),
+        Binding("down", "down", show=False),
+        Binding("right", "nav('right')", show=False),
     ]
+
+    def action_down(self) -> None:
+        """Past the last item, drop into the box below."""
+        if self.highlighted is not None and self.highlighted >= self.option_count - 1:
+            self.action_back()
+        else:
+            self.action_cursor_down()
+
+    def action_nav(self, direction: str) -> None:
+        nav = getattr(self.screen, "nav", None)
+        if nav:
+            nav(self.id, direction)
 
     def action_back(self) -> None:
         self.screen.query_one("#new" if self.screen.query("#new") else "#extra", Input).focus()
@@ -660,16 +675,27 @@ class CommandInput(Input):
             self.cursor_position = len(self.value)
             m.display = False
         else:
-            self.screen.action_cycle(1)
+            self.screen.action_toggle_area()
 
     def action_close_menu(self) -> None:
         self._menu().display = False
 
 
 class ItemInput(Input):
-    """Where you type what you're working on. Up jumps into the item list."""
+    """Where you type what you're working on. Up jumps into the item list;
+    right at the end of the text moves over to the side panels."""
 
-    BINDINGS = [Binding("up", "to_list", show=False)]
+    BINDINGS = [
+        Binding("up", "to_list", show=False),
+        Binding("right", "right", show=False),
+    ]
+
+    def action_right(self) -> None:
+        nav = getattr(self.screen, "nav", None)
+        if nav and self.cursor_position >= len(self.value):
+            nav(self.id, "right")
+        else:
+            self.action_cursor_right()
 
     def action_to_list(self) -> None:
         items = self.screen.query_one("#items", ItemList)
@@ -679,9 +705,20 @@ class ItemInput(Input):
 
 
 class FocusPanel(Static, can_focus=True):
-    """A side panel you can tab to; enter opens its full view."""
+    """A side panel you can arrow to; enter opens its full view."""
 
-    BINDINGS = [Binding("enter", "open", "open", show=False)]
+    BINDINGS = [
+        Binding("enter", "open", "open", show=False),
+        Binding("up", "nav('up')", show=False),
+        Binding("down", "nav('down')", show=False),
+        Binding("left", "nav('left')", show=False),
+        Binding("right", "nav('right')", show=False),
+    ]
+
+    def action_nav(self, direction: str) -> None:
+        nav = getattr(self.screen, "nav", None)
+        if nav:
+            nav(self.id, direction)
 
     class Opened(Message):
         def __init__(self, panel_id: str):
@@ -1147,10 +1184,10 @@ class MainScreen(Screen):
         Binding("ctrl+n", "new_item", "add item", show=False),
         Binding("ctrl+s", "punch_in", "punch in", show=False),
         Binding("ctrl+s", "punch_out", "punch out", show=False),
-        Binding("tab", "cycle(1)", "switch window"),
-        Binding("ctrl+tab", "cycle(1)", "switch window", show=False),
-        Binding("ctrl+shift+tab", "cycle(-1)", "switch window", show=False),
-        Binding("shift+tab", "cycle(-1)", "switch window", show=False),
+        Binding("tab", "toggle_area", "switch window"),
+        Binding("ctrl+tab", "toggle_area", "switch window", show=False),
+        Binding("ctrl+shift+tab", "toggle_area", "switch window", show=False),
+        Binding("shift+tab", "toggle_area", "switch window", show=False),
         Binding("ctrl+p", "app.command_palette", "commands", show=False),
         Binding("f1", "keys", "shortcuts", show=False),
         Binding("ctrl+t", "edit_block", "edit times", show=False),
@@ -1158,7 +1195,15 @@ class MainScreen(Screen):
         Binding("f5", "preview", "preview", show=False),
         Binding("ctrl+b", "toggle_side", "side panel", show=False),
     ]
-    CYCLE = ["#cmd", "#new", "#today", "#week"]
+    # Arrow moves inside the top section: (from, direction) -> to.
+    NAV = {
+        ("new", "right"): "today",
+        ("items", "right"): "today",
+        ("today", "down"): "week",
+        ("today", "left"): "new",
+        ("week", "up"): "today",
+        ("week", "left"): "new",
+    }
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -1374,16 +1419,31 @@ class MainScreen(Screen):
         return True
 
     # ── focus ──
-    def action_cycle(self, step: int) -> None:
-        order = [w for w in self.CYCLE if self.query_one(w).display and self.query_one(w).parent.display]
+    def _is_shown(self, wid: str) -> bool:
+        w = self.query_one(f"#{wid}")
+        return bool(w.display and w.parent.display)
+
+    def action_toggle_area(self) -> None:
+        """Tab: jump between the prompt bar and the top section, which
+        remembers where you were in it."""
         cur = self.focused
-        cur_id = f"#{cur.id}" if cur is not None and cur.id else "#cmd"
-        if cur_id == "#items":
-            cur_id = "#new"
-        i = order.index(cur_id) if cur_id in order else 0
-        self.query_one(order[(i + step) % len(order)]).focus()
+        if cur is not None and cur.id != "cmd":
+            self._last_top = cur.id
+            self.query_one("#cmd").focus()
+        else:
+            last = getattr(self, "_last_top", None)
+            self.query_one(f"#{last if last and self._is_shown(last) else 'new'}").focus()
         self.query_one("#slash").display = False
         self.reload()
+
+    def nav(self, src: str, direction: str) -> None:
+        """Arrow keys inside the top section."""
+        dst = self.NAV.get((src, direction))
+        if dst and not self._is_shown(dst) and dst == "today":
+            dst = "week" if self._is_shown("week") else None
+        if dst and self._is_shown(dst):
+            self.query_one(f"#{dst}").focus()
+            self.reload()
 
     @on(FocusPanel.Opened)
     def _open_panel(self, ev: FocusPanel.Opened) -> None:
