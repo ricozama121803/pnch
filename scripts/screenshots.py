@@ -26,51 +26,10 @@ freezegun.configure(extend_ignore_list=["textual", "asyncio", "rich"])
 
 
 def seed() -> None:
-    from pnch import config
-    from pnch.store import Store
+    from demo_data import seed_config, seed_log
 
-    config.load()
-    for key, value in [("name", "Alex Rivera"), ("email", "alex@example.com"), ("paypal", "@alexrivera")]:
-        config.set_value("you", key, value)
-    config.set_value("client", "name", "Acme Robotics")
-    config.set_value("invoice", "doc_title", "Acme Robotics Logs + Invoice")
-    config.set_value("invoice", "role", "Acme Frontend Contractor")
-
-    st = Store.load()
-    d = lambda s: datetime.fromisoformat(s)  # noqa: E731
-    blocks = [
-        # two weeks ago (approved + exported)
-        ("2026-10-13 16:00", "2026-10-13 17:03", ["Kickoff meeting"]),
-        ("2026-10-14 23:00", "2026-10-15 00:12", ["Pulled together the manual leads list"]),
-        ("2026-10-15 11:00", "2026-10-15 13:26", ["Meeting", "Scraper tools + AWS; checked VPN prefix list"]),
-        ("2026-10-15 15:00", "2026-10-15 16:30", ["Lambda/Terraform changes into Git"]),
-        ("2026-10-18 20:00", "2026-10-18 23:09", ["Automated scraper changes after meeting", "Updated READMEs"]),
-        # last week (approved)
-        ("2026-10-19 10:00", "2026-10-19 12:15", ["Sprint planning", "Ticket grooming"]),
-        ("2026-10-21 13:30", "2026-10-21 17:45", ["Built the export API endpoint"]),
-        ("2026-10-23 09:15", "2026-10-23 11:00", ["Code review", "Fixed flaky tests"]),
-        # this week
-        ("2026-10-26 09:00", "2026-10-26 11:30", ["Standup", "Reviewed PRs"]),
-        ("2026-10-26 13:00", "2026-10-26 17:15", ["Scraper retries + backoff"]),
-        ("2026-10-27 10:00", "2026-10-27 12:00", ["AWS cost report"]),
-        ("2026-10-27 19:00", "2026-10-27 21:40", ["Leads cleanup for sales"]),
-        ("2026-10-28 09:30", "2026-10-28 12:45", ["Dashboard charts"]),
-        ("2026-10-28 14:00", "2026-10-28 18:00", ["Dashboard filters", "Wrote tests"]),
-        ("2026-10-29 09:00", "2026-10-29 12:10", ["Client call", "Spec for invoices v2"]),
-    ]
-    for start, end, notes in blocks:
-        st.add(d(start), d(end), notes)
-    st.add(d("2026-10-29 13:48"), None, ["Fixing the scraper timeout", "Checked AWS logs"])
-    for monday, number, billed, summary, exported in [
-        ("2026-10-12", 1007, 540, "Scraper, leads, AWS and meeting work", True),
-        ("2026-10-19", 1008, 480, "Planning, export API and code review", False),
-    ]:
-        st.weeks[monday] = {
-            "approved_at": "2026-10-20T09:00:00", "total_minutes": billed, "billed_minutes": billed, "rate": 25.0,
-            "invoice_number": number, "summary": summary, "issued": "2026-10-21", "due": "2026-11-10",
-            "exports": [{"path": "~/Documents/pnch/x.pdf", "at": "2026-10-21T09:00:00"}] if exported else [],
-        }
-    st.save()
+    seed_config()
+    seed_log()
 
 
 async def shoot() -> None:
@@ -94,6 +53,9 @@ async def shoot() -> None:
         await pilot.pause(0.5)
         main.query_one("#new").focus()
         await snap("main", "fight", 4)                      # mid-punch
+        app.apply_theme("leonida")
+        await snap("theme-leonida", "fight", 12)
+        app.apply_theme("catppuccin")
 
         main.query_one("#cmd").focus()
         await pilot.press("/", "down", "down")
@@ -102,7 +64,7 @@ async def shoot() -> None:
         main.query_one("#cmd").value = ""
 
         await pilot.press(*"out", "enter")
-        await pilot.press(*"Bumped the retry limit")
+        await pilot.press(*"Fixed the sticky header on iOS")
         await snap("punch-out")
         main.query_one("#new").value = ""
         app.screen.query_one("#extra").value = ""
